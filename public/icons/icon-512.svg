@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="128" fill="#09090b"/>
+  <circle cx="256" cy="256" r="210" stroke="#18181b" stroke-width="8" fill="none"/>
+  <!-- Glowing gradient background circle -->
+  <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+    <stop offset="0%" stop-color="#10b981" stop-opacity="0.25"/>
+    <stop offset="100%" stop-color="#09090b" stop-opacity="0"/>
+  </radialGradient>
+  <circle cx="256" cy="256" r="180" fill="url(#glow)"/>
+  <!-- Barbell graphics -->
+  <g transform="translate(76, 76) scale(0.7)">
+    <line x1="80" y1="256" x2="432" y2="256" stroke="#10b981" stroke-width="32" stroke-linecap="round"/>
+    <!-- Outer Plates Left -->
+    <rect x="80" y="146" width="36" height="220" rx="10" fill="#34d399"/>
+    <rect x="124" y="176" width="28" height="160" rx="8" fill="#10b981"/>
+    <!-- Inner Collars Left -->
+    <rect x="160" y="216" width="16" height="80" rx="4" fill="#059669"/>
+
+    <!-- Outer Plates Right -->
+    <rect x="396" y="146" width="36" height="220" rx="10" fill="#34d399"/>
+    <rect x="360" y="176" width="28" height="160" rx="8" fill="#10b981"/>
+    <!-- Inner Collars Right -->
+    <rect x="336" y="216" width="16" height="80" rx="4" fill="#059669"/>
+
+    <!-- Center Knurling Grips -->
+    <line x1="210" y1="256" x2="240" y2="256" stroke="#059669" stroke-width="32"/>
+    <line x1="272" y1="256" x2="302" y2="256" stroke="#059669" stroke-width="32"/>
+  </g>
+  <!-- Apex Peak / Arrow accent -->
+  <path d="M 230 135 L 256 100 L 282 135" stroke="#06b6d4" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>
