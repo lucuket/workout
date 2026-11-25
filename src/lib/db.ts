@@ -1,14 +1,31 @@
 import { openDB, DBSchema, IDBPDatabase } from 'idb';
 import {
-  Exercise,
-  RoutineTemplate,
-  Workout,
+  ActiveWorkoutRecord,
+  BackupDataBundle,
   BodyweightEntry,
+  Exercise,
+  PersonalRecord,
+  RoutineTemplate,
+  SyncAction,
   SyncQueueItem,
   UserPreferences,
-  PersonalRecord,
+  Workout,
 } from './types';
+import { DEFAULT_PREFERENCES, generateId } from './constants';
 import { SEED_EXERCISES, SEED_ROUTINES, generateRealisticHistory } from './seed-data';
+import {
+  calculate1RM,
+  calculatePersonalRecordsFromWorkouts,
+  createEmptyWorkout,
+  createWorkoutFromRoutine,
+  ExerciseLastPerformance,
+  findLastPerformanceByExercise,
+} from './workout-utils';
+
+interface PreferenceRecord {
+  key: string;
+  value: UserPreferences;
+}
 
 interface GymTrackerDB extends DBSchema {
   exercises: {
@@ -27,7 +44,7 @@ interface GymTrackerDB extends DBSchema {
   };
   active_workout: {
     key: string;
-    value: Workout;
+    value: ActiveWorkoutRecord;
   };
   bodyweight: {
     key: string;
@@ -41,18 +58,50 @@ interface GymTrackerDB extends DBSchema {
   };
   preferences: {
     key: string;
-    value: any;
+    value: PreferenceRecord;
   };
 }
 
 const DB_NAME = 'gym_workout_tracker_db';
 const DB_VERSION = 1;
+const ACTIVE_SESSION_KEY = 'current_session';
 
 let dbPromise: Promise<IDBPDatabase<GymTrackerDB>> | null = null;
 
+type ActiveWorkoutListener = (workout: Workout | null) => void;
+type SyncQueueListener = () => void;
+
+const activeWorkoutListeners = new Set<ActiveWorkoutListener>();
+const syncQueueListeners = new Set<SyncQueueListener>();
+
+export function subscribeActiveWorkout(listener: ActiveWorkoutListener): () => void {
+  activeWorkoutListeners.add(listener);
+  return () => {
+    activeWorkoutListeners.delete(listener);
+  };
+}
+
+export function subscribeSyncQueueMutations(listener: SyncQueueListener): () => void {
+  syncQueueListeners.add(listener);
+  return () => {
+    syncQueueListeners.delete(listener);
+  };
+}
+
+function notifyActiveWorkoutListeners(workout: Workout | null): void {
+  for (const listener of activeWorkoutListeners) {
+    listener(workout);
+  }
+}
+
+function notifySyncQueueListeners(): void {
+  for (const listener of syncQueueListeners) {
+    listener();
+  }
+}
+
 export function getDB(): Promise<IDBPDatabase<GymTrackerDB>> {
   if (typeof window === 'undefined') {
-    // Return dummy rejection during SSR
     return Promise.reject(new Error('IndexedDB is only accessible in the browser'));
   }
 
@@ -92,12 +141,26 @@ export function getDB(): Promise<IDBPDatabase<GymTrackerDB>> {
   return dbPromise;
 }
 
-// Ensure database is initialized and seeded on first visit
+// Ensure database is initialized and seeded on first visit (and top up new built-in exercises)
 export async function initDatabase(): Promise<void> {
   const db = await getDB();
   const exerciseCount = await db.count('exercises');
   if (exerciseCount === 0) {
     await seedDemoData(true);
+    return;
+  }
+
+  // Non-destructively add any newly seeded built-in exercises missing from older local DBs
+  if (exerciseCount < SEED_EXERCISES.length) {
+    const existingKeys = new Set(await db.getAllKeys('exercises'));
+    const missing = SEED_EXERCISES.filter((ex) => !existingKeys.has(ex.id));
+    if (missing.length > 0) {
+      const tx = db.transaction('exercises', 'readwrite');
+      for (const ex of missing) {
+        await tx.store.put(ex);
+      }
+      await tx.done;
+    }
   }
 }
 
@@ -112,21 +175,18 @@ export async function seedDemoData(force = false): Promise<void> {
     await db.clear('bodyweight');
   }
 
-  // 1. Seed Exercises
   const txEx = db.transaction('exercises', 'readwrite');
   for (const ex of SEED_EXERCISES) {
     await txEx.store.put(ex);
   }
   await txEx.done;
 
-  // 2. Seed Routines
   const txRt = db.transaction('routines', 'readwrite');
   for (const rt of SEED_ROUTINES) {
     await txRt.store.put(rt);
   }
   await txRt.done;
 
-  // 3. Seed Realistic History (3 Months)
   const { workouts, bodyweight } = generateRealisticHistory();
 
   const txWk = db.transaction('workouts', 'readwrite');
@@ -141,26 +201,17 @@ export async function seedDemoData(force = false): Promise<void> {
   }
   await txBw.done;
 
-  // Set default preferences if missing
   const existingPref = await db.get('preferences', 'user_preferences');
   if (!existingPref) {
-    const defaultPrefs: UserPreferences = {
-      weight_unit: 'lbs',
-      barbell_weight: 45,
-      default_rest_seconds: 90,
-      sound_enabled: true,
-      haptic_enabled: true,
-      theme: 'dark',
-      weekly_goal_workouts: 4,
-    };
-    await db.put('preferences', { key: 'user_preferences', value: defaultPrefs });
+    await db.put('preferences', { key: 'user_preferences', value: DEFAULT_PREFERENCES });
   }
 }
 
 // --- Exercises ---
 export async function getAllExercises(): Promise<Exercise[]> {
   const db = await getDB();
-  return db.getAll('exercises');
+  const all = await db.getAll('exercises');
+  return all.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export async function getExerciseById(id: string): Promise<Exercise | undefined> {
@@ -168,10 +219,22 @@ export async function getExerciseById(id: string): Promise<Exercise | undefined>
   return db.get('exercises', id);
 }
 
-export async function addCustomExercise(exercise: Exercise): Promise<void> {
+export async function addCustomExercise(exercise: Exercise): Promise<Exercise> {
   const db = await getDB();
-  await db.put('exercises', { ...exercise, is_custom: true, created_at: new Date().toISOString() });
-  await enqueueSync('UPSERT_EXERCISE', exercise.id, exercise);
+  const record: Exercise = {
+    ...exercise,
+    is_custom: true,
+    created_at: exercise.created_at || new Date().toISOString(),
+  };
+  await db.put('exercises', record);
+  await enqueueSync('UPSERT_EXERCISE', record.id, record as unknown as Record<string, unknown>);
+  return record;
+}
+
+export async function deleteCustomExercise(id: string): Promise<void> {
+  const db = await getDB();
+  await db.delete('exercises', id);
+  await enqueueSync('DELETE_EXERCISE', id, { id });
 }
 
 // --- Routines ---
@@ -188,7 +251,7 @@ export async function getRoutineById(id: string): Promise<RoutineTemplate | unde
 export async function saveRoutine(routine: RoutineTemplate): Promise<void> {
   const db = await getDB();
   await db.put('routines', routine);
-  await enqueueSync('UPSERT_ROUTINE', routine.id, routine);
+  await enqueueSync('UPSERT_ROUTINE', routine.id, routine as unknown as Record<string, unknown>);
 }
 
 export async function deleteRoutine(id: string): Promise<void> {
@@ -201,7 +264,6 @@ export async function deleteRoutine(id: string): Promise<void> {
 export async function getAllWorkouts(): Promise<Workout[]> {
   const db = await getDB();
   const workouts = await db.getAllFromIndex('workouts', 'by-start-time');
-  // Sort descending by start time
   return workouts.sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
 }
 
@@ -210,10 +272,16 @@ export async function getWorkoutById(id: string): Promise<Workout | undefined> {
   return db.get('workouts', id);
 }
 
-export async function saveWorkout(workout: Workout): Promise<void> {
+export async function saveWorkout(workout: Workout): Promise<Workout> {
   const db = await getDB();
-  await db.put('workouts', workout);
-  await enqueueSync('UPSERT_WORKOUT', workout.id, workout);
+  // Defensive guard against legacy 'current_session' IDs
+  const safeWorkout: Workout =
+    workout.id === ACTIVE_SESSION_KEY
+      ? { ...workout, id: generateId('workout') }
+      : workout;
+  await db.put('workouts', safeWorkout);
+  await enqueueSync('UPSERT_WORKOUT', safeWorkout.id, safeWorkout as unknown as Record<string, unknown>);
+  return safeWorkout;
 }
 
 export async function deleteWorkout(id: string): Promise<void> {
@@ -225,31 +293,66 @@ export async function deleteWorkout(id: string): Promise<void> {
 // --- Active Workout State ---
 export async function getActiveWorkout(): Promise<Workout | null> {
   const db = await getDB();
-  const active = await db.get('active_workout', 'current_session');
-  return active || null;
+  const active = await db.get('active_workout', ACTIVE_SESSION_KEY);
+  if (!active) return null;
+
+  const { workout_id, ...rest } = active;
+  const realId =
+    workout_id ||
+    (rest.id === ACTIVE_SESSION_KEY ? generateId('workout') : rest.id);
+
+  return {
+    ...rest,
+    id: realId,
+  };
 }
 
 export async function saveActiveWorkout(workout: Workout): Promise<void> {
   const db = await getDB();
-  await db.put('active_workout', { ...workout, id: 'current_session' });
+  const realId =
+    workout.id === ACTIVE_SESSION_KEY ? generateId('workout') : workout.id;
+
+  const record: ActiveWorkoutRecord = {
+    ...workout,
+    id: ACTIVE_SESSION_KEY,
+    workout_id: realId,
+  };
+  await db.put('active_workout', record);
+  notifyActiveWorkoutListeners({ ...workout, id: realId });
 }
 
 export async function clearActiveWorkout(): Promise<void> {
   const db = await getDB();
-  await db.delete('active_workout', 'current_session');
+  await db.delete('active_workout', ACTIVE_SESSION_KEY);
+  notifyActiveWorkoutListeners(null);
+}
+
+export async function startWorkoutFromRoutine(routine: RoutineTemplate): Promise<Workout> {
+  const [prefs, workouts] = await Promise.all([getUserPreferences(), getAllWorkouts()]);
+  const exerciseIds = routine.exercises.map((e) => e.exercise_id);
+  const lastPerfs = findLastPerformanceByExercise(workouts, exerciseIds);
+  const workout = createWorkoutFromRoutine(routine, prefs, lastPerfs);
+  await saveActiveWorkout(workout);
+  return workout;
+}
+
+export async function startEmptyWorkout(name = 'Quick Workout'): Promise<Workout> {
+  const workout = createEmptyWorkout(name);
+  await saveActiveWorkout(workout);
+  return workout;
 }
 
 // --- Bodyweight ---
 export async function getAllBodyweightEntries(): Promise<BodyweightEntry[]> {
   const db = await getDB();
   const entries = await db.getAllFromIndex('bodyweight', 'by-date');
-  return entries.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  return entries.sort((a, b) => a.date.localeCompare(b.date));
 }
 
 export async function logBodyweight(entry: BodyweightEntry): Promise<void> {
   const db = await getDB();
   await db.put('bodyweight', entry);
-  await enqueueSync('UPSERT_BODYWEIGHT', entry.id, entry);
+  await enqueueSync('UPSERT_BODYWEIGHT', entry.id, entry as unknown as Record<string, unknown>);
 }
 
 export async function deleteBodyweight(id: string): Promise<void> {
@@ -263,107 +366,201 @@ export async function getUserPreferences(): Promise<UserPreferences> {
   const db = await getDB();
   const item = await db.get('preferences', 'user_preferences');
   if (item && item.value) {
-    return item.value as UserPreferences;
+    return { ...DEFAULT_PREFERENCES, ...item.value };
   }
-  return {
-    weight_unit: 'lbs',
-    barbell_weight: 45,
-    default_rest_seconds: 90,
-    sound_enabled: true,
-    haptic_enabled: true,
-    theme: 'dark',
-    weekly_goal_workouts: 4,
-  };
+  return { ...DEFAULT_PREFERENCES };
 }
 
 export async function saveUserPreferences(prefs: Partial<UserPreferences>): Promise<UserPreferences> {
   const db = await getDB();
   const current = await getUserPreferences();
-  const updated = { ...current, ...prefs };
+  const updated: UserPreferences = { ...current, ...prefs };
   await db.put('preferences', { key: 'user_preferences', value: updated });
   return updated;
 }
 
 // --- Previous Session History for Fast Auto-fill ---
-export async function getLastPerformanceForExercise(exerciseId: string): Promise<{ weight: number; reps: number } | null> {
+export async function getLastPerformanceForExercise(
+  exerciseId: string
+): Promise<ExerciseLastPerformance | null> {
   const workouts = await getAllWorkouts();
-  for (const w of workouts) {
-    const exercise = w.exercises.find((e) => e.exercise_id === exerciseId);
-    if (exercise && exercise.sets.length > 0) {
-      // Find highest working set
-      const completedSets = exercise.sets.filter((s) => s.completed && s.type === 'normal');
-      if (completedSets.length > 0) {
-        return {
-          weight: completedSets[0].weight,
-          reps: completedSets[0].reps,
-        };
-      }
-    }
-  }
-  return null;
+  const result = findLastPerformanceByExercise(workouts, [exerciseId]);
+  return result[exerciseId] || null;
 }
 
-// --- 1RM & Analytics Calculations ---
-// Epley formula: 1RM = Weight * (1 + Reps / 30)
-export function calculate1RM(weight: number, reps: number): number {
-  if (reps <= 0 || weight <= 0) return 0;
-  if (reps === 1) return weight;
-  return Math.round(weight * (1 + reps / 30) * 10) / 10;
+export async function getLastPerformancesForExercises(
+  exerciseIds: string[]
+): Promise<Record<string, ExerciseLastPerformance>> {
+  const workouts = await getAllWorkouts();
+  return findLastPerformanceByExercise(workouts, exerciseIds);
 }
+
+// Re-export calculate1RM for existing imports
+export { calculate1RM };
 
 // Calculate all Personal Records from workouts history
 export async function calculatePersonalRecords(): Promise<Record<string, PersonalRecord>> {
   const workouts = await getAllWorkouts();
-  const prMap: Record<string, PersonalRecord> = {};
+  return calculatePersonalRecordsFromWorkouts(workouts);
+}
 
-  for (const w of workouts) {
-    for (const ex of w.exercises) {
-      for (const set of ex.sets) {
-        if (!set.completed || set.weight <= 0 || set.reps <= 0) continue;
+// --- Backup Export & Import ---
+export async function exportBackupData(): Promise<BackupDataBundle> {
+  const [preferences, exercises, routines, workouts, bodyweight] = await Promise.all([
+    getUserPreferences(),
+    getAllExercises(),
+    getAllRoutines(),
+    getAllWorkouts(),
+    getAllBodyweightEntries(),
+  ]);
 
-        const est1RM = calculate1RM(set.weight, set.reps);
-        const volume = set.weight * set.reps;
+  return {
+    version: 1,
+    exported_at: new Date().toISOString(),
+    preferences,
+    exercises,
+    routines,
+    workouts,
+    bodyweight,
+  };
+}
 
-        if (!prMap[ex.exercise_id]) {
-          prMap[ex.exercise_id] = {
-            exercise_id: ex.exercise_id,
-            exercise_name: ex.exercise_name,
-            max_weight: { weight: set.weight, reps: set.reps, date: w.start_time, workout_id: w.id },
-            max_1rm: { value: est1RM, weight: set.weight, reps: set.reps, date: w.start_time, workout_id: w.id },
-            max_volume: { volume, weight: set.weight, reps: set.reps, date: w.start_time, workout_id: w.id },
-          };
-        } else {
-          const rec = prMap[ex.exercise_id];
-          if (set.weight > rec.max_weight.weight) {
-            rec.max_weight = { weight: set.weight, reps: set.reps, date: w.start_time, workout_id: w.id };
-          }
-          if (est1RM > rec.max_1rm.value) {
-            rec.max_1rm = { value: est1RM, weight: set.weight, reps: set.reps, date: w.start_time, workout_id: w.id };
-          }
-          if (volume > rec.max_volume.volume) {
-            rec.max_volume = { volume, weight: set.weight, reps: set.reps, date: w.start_time, workout_id: w.id };
-          }
-        }
-      }
-    }
+export async function importBackupData(bundle: BackupDataBundle): Promise<void> {
+  if (!bundle || typeof bundle !== 'object' || !Array.isArray(bundle.workouts)) {
+    throw new Error('Invalid backup file format.');
   }
 
-  return prMap;
+  const db = await getDB();
+
+  if (Array.isArray(bundle.exercises) && bundle.exercises.length > 0) {
+    const tx = db.transaction('exercises', 'readwrite');
+    for (const ex of bundle.exercises) {
+      await tx.store.put(ex);
+    }
+    await tx.done;
+  }
+
+  if (Array.isArray(bundle.routines)) {
+    const tx = db.transaction('routines', 'readwrite');
+    for (const rt of bundle.routines) {
+      await tx.store.put(rt);
+    }
+    await tx.done;
+  }
+
+  if (Array.isArray(bundle.workouts)) {
+    const tx = db.transaction('workouts', 'readwrite');
+    for (const wk of bundle.workouts) {
+      await tx.store.put(wk);
+    }
+    await tx.done;
+  }
+
+  if (Array.isArray(bundle.bodyweight)) {
+    const tx = db.transaction('bodyweight', 'readwrite');
+    for (const bw of bundle.bodyweight) {
+      await tx.store.put(bw);
+    }
+    await tx.done;
+  }
+
+  if (bundle.preferences) {
+    await saveUserPreferences(bundle.preferences);
+  }
+}
+
+// --- Remote Merge Helpers (used by Supabase pull sync) ---
+export async function mergeRemoteRecords(data: {
+  exercises?: Exercise[];
+  routines?: RoutineTemplate[];
+  workouts?: Workout[];
+  bodyweight?: BodyweightEntry[];
+}): Promise<void> {
+  const db = await getDB();
+  const pendingQueue = await getSyncQueue();
+  const pendingEntityIds = new Set(pendingQueue.map((item) => item.entity_id));
+
+  if (data.exercises?.length) {
+    const tx = db.transaction('exercises', 'readwrite');
+    for (const ex of data.exercises) {
+      if (!pendingEntityIds.has(ex.id)) {
+        await tx.store.put(ex);
+      }
+    }
+    await tx.done;
+  }
+
+  if (data.routines?.length) {
+    const tx = db.transaction('routines', 'readwrite');
+    for (const rt of data.routines) {
+      if (!pendingEntityIds.has(rt.id)) {
+        await tx.store.put(rt);
+      }
+    }
+    await tx.done;
+  }
+
+  if (data.workouts?.length) {
+    const tx = db.transaction('workouts', 'readwrite');
+    for (const wk of data.workouts) {
+      if (!pendingEntityIds.has(wk.id)) {
+        await tx.store.put({ ...wk, synced: true });
+      }
+    }
+    await tx.done;
+  }
+
+  if (data.bodyweight?.length) {
+    const tx = db.transaction('bodyweight', 'readwrite');
+    for (const bw of data.bodyweight) {
+      if (!pendingEntityIds.has(bw.id)) {
+        await tx.store.put(bw);
+      }
+    }
+    await tx.done;
+  }
 }
 
 // --- Sync Queue Helpers ---
-export async function enqueueSync(action: any, entityId: string, payload: any): Promise<void> {
+function getEntityTypeForAction(action: SyncAction): string {
+  if (action.endsWith('WORKOUT')) return 'workout';
+  if (action.endsWith('ROUTINE')) return 'routine';
+  if (action.endsWith('EXERCISE')) return 'exercise';
+  return 'bodyweight';
+}
+
+export async function enqueueSync(
+  action: SyncAction,
+  entityId: string,
+  payload: Record<string, unknown>
+): Promise<void> {
   try {
     const db = await getDB();
+    const existingQueue = await db.getAllFromIndex('sync_queue', 'by-timestamp');
+    const entityType = getEntityTypeForAction(action);
+
+    // Coalesce redundant queued operations for the same entity so offline edits stay compact
+    const matching = existingQueue.filter(
+      (item) => item.entity_id === entityId && getEntityTypeForAction(item.action) === entityType
+    );
+
+    const tx = db.transaction('sync_queue', 'readwrite');
+    for (const oldItem of matching) {
+      await tx.store.delete(oldItem.id);
+    }
+
     const item: SyncQueueItem = {
-      id: `sync-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      id: generateId('sync'),
       action,
       entity_id: entityId,
       payload,
       timestamp: new Date().toISOString(),
       retries: 0,
     };
-    await db.put('sync_queue', item);
+    await tx.store.put(item);
+    await tx.done;
+
+    notifySyncQueueListeners();
   } catch (err) {
     console.error('Failed to enqueue sync item:', err);
   }
@@ -378,11 +575,30 @@ export async function getSyncQueue(): Promise<SyncQueueItem[]> {
   }
 }
 
+export async function updateSyncQueueItem(item: SyncQueueItem): Promise<void> {
+  try {
+    const db = await getDB();
+    await db.put('sync_queue', item);
+  } catch (err) {
+    console.error('Failed to update sync queue item:', err);
+  }
+}
+
 export async function removeSyncQueueItem(id: string): Promise<void> {
   try {
     const db = await getDB();
     await db.delete('sync_queue', id);
   } catch (err) {
     console.error('Failed to remove sync queue item:', err);
+  }
+}
+
+export async function clearSyncQueue(): Promise<void> {
+  try {
+    const db = await getDB();
+    await db.clear('sync_queue');
+    notifySyncQueueListeners();
+  } catch (err) {
+    console.error('Failed to clear sync queue:', err);
   }
 }

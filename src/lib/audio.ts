@@ -1,17 +1,21 @@
 // Web Audio API synthesized alert chime and notification dispatcher
+import { withBasePath } from './constants';
 
 let audioCtx: AudioContext | null = null;
 
 function getAudioContext(): AudioContext | null {
   if (typeof window === 'undefined') return null;
   if (!audioCtx) {
-    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    const win = window as Window & { webkitAudioContext?: typeof AudioContext };
+    const AudioContextClass = window.AudioContext || win.webkitAudioContext;
     if (AudioContextClass) {
       audioCtx = new AudioContextClass();
     }
   }
   if (audioCtx && audioCtx.state === 'suspended') {
-    audioCtx.resume();
+    audioCtx.resume().catch(() => {
+      // Ignore autoplay resume errors until user gesture
+    });
   }
   return audioCtx;
 }
@@ -69,8 +73,12 @@ export async function requestNotificationPermission(): Promise<boolean> {
     return true;
   }
   if (Notification.permission !== 'denied') {
-    const perm = await Notification.requestPermission();
-    return perm === 'granted';
+    try {
+      const perm = await Notification.requestPermission();
+      return perm === 'granted';
+    } catch {
+      return false;
+    }
   }
   return false;
 }
@@ -80,11 +88,24 @@ export function sendRestCompleteNotification(exerciseName?: string): void {
     try {
       new Notification('Rest Time Up! ⏱️', {
         body: exerciseName ? `Ready for your next set of ${exerciseName}` : 'Time to crush the next set!',
-        icon: '/icons/icon-192.png',
+        icon: withBasePath('/icons/icon-192.svg'),
         tag: 'rest-timer',
       });
     } catch {
-      // Fallback
+      // Fallback for mobile browsers that require ServiceWorkerRegistration.showNotification
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.ready
+          .then((reg) =>
+            reg.showNotification('Rest Time Up! ⏱️', {
+              body: exerciseName ? `Ready for your next set of ${exerciseName}` : 'Time to crush the next set!',
+              icon: withBasePath('/icons/icon-192.svg'),
+              tag: 'rest-timer',
+            })
+          )
+          .catch(() => {
+            // Ignore notification errors
+          });
+      }
     }
   }
 }

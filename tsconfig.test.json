@@ -1,0 +1,20 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": false,
+    "outDir": ".test-dist",
+    "incremental": false,
+    "isolatedModules": false
+  },
+  "include": [
+    "src/lib/types.ts",
+    "src/lib/constants.ts",
+    "src/lib/workout-utils.ts",
+    "src/lib/plate-calculator.ts",
+    "src/lib/seed-data.ts",
+    "tests/**/*.ts"
+  ],
+  "exclude": ["node_modules"]
+}

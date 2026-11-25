@@ -1,8 +1,13 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { Timer, Plus, Minus, X, Bell } from 'lucide-react';
-import { playTimerChime, triggerHaptic, sendRestCompleteNotification, requestNotificationPermission } from '@/lib/audio';
+import { Timer, X } from 'lucide-react';
+import {
+  playTimerChime,
+  triggerHaptic,
+  sendRestCompleteNotification,
+  requestNotificationPermission,
+} from '@/lib/audio';
 
 interface RestTimerProps {
   secondsRemaining: number;
@@ -11,6 +16,7 @@ interface RestTimerProps {
   onAdjustTime: (deltaSeconds: number) => void;
   onSkip: () => void;
   soundEnabled?: boolean;
+  hapticEnabled?: boolean;
 }
 
 export default function RestTimer({
@@ -20,13 +26,13 @@ export default function RestTimer({
   onAdjustTime,
   onSkip,
   soundEnabled = true,
+  hapticEnabled = true,
 }: RestTimerProps) {
   const [hasNotified, setHasNotified] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
 
-  // Ask for notification permission once when timer appears
   useEffect(() => {
-    requestNotificationPermission();
+    void requestNotificationPermission();
   }, []);
 
   useEffect(() => {
@@ -35,12 +41,14 @@ export default function RestTimer({
       if (soundEnabled) {
         playTimerChime();
       }
-      triggerHaptic([100, 50, 100, 50, 150]);
+      if (hapticEnabled) {
+        triggerHaptic([100, 50, 100, 50, 150]);
+      }
       sendRestCompleteNotification(exerciseName);
-    } else if (secondsRemaining > 0) {
+    } else if (secondsRemaining > 0 && hasNotified) {
       setHasNotified(false);
     }
-  }, [secondsRemaining, hasNotified, soundEnabled, exerciseName]);
+  }, [secondsRemaining, hasNotified, soundEnabled, hapticEnabled, exerciseName]);
 
   const formatTime = (secs: number) => {
     const mins = Math.floor(Math.max(0, secs) / 60);
@@ -54,6 +62,7 @@ export default function RestTimer({
   if (isMinimized) {
     return (
       <button
+        type="button"
         onClick={() => setIsMinimized(false)}
         className={`fixed bottom-20 right-4 z-40 flex items-center gap-2 px-3 py-2 rounded-full shadow-2xl border active-press ${
           isFinished
@@ -61,7 +70,7 @@ export default function RestTimer({
             : 'bg-zinc-900/95 text-zinc-100 border-zinc-700 backdrop-blur-md'
         }`}
       >
-        <Timer className="w-4 h-4 text-emerald-400" />
+        <Timer className={`w-4 h-4 ${isFinished ? 'text-zinc-950' : 'text-emerald-400'}`} />
         <span className="font-mono text-sm font-bold">{formatTime(secondsRemaining)}</span>
       </button>
     );
@@ -76,10 +85,13 @@ export default function RestTimer({
             : 'bg-zinc-900/95 border-zinc-700/80 shadow-black/80'
         }`}
       >
-        {/* Progress Bar Header */}
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
-            <div className={`p-1.5 rounded-lg ${isFinished ? 'bg-emerald-500 text-zinc-950' : 'bg-emerald-500/20 text-emerald-400'}`}>
+            <div
+              className={`p-1.5 rounded-lg ${
+                isFinished ? 'bg-emerald-500 text-zinc-950' : 'bg-emerald-500/20 text-emerald-400'
+              }`}
+            >
               <Timer className="w-4 h-4" />
             </div>
             <div>
@@ -96,12 +108,14 @@ export default function RestTimer({
 
           <div className="flex items-center gap-1.5">
             <button
+              type="button"
               onClick={() => setIsMinimized(true)}
               className="px-2 py-1 text-[10px] text-zinc-400 hover:text-zinc-200 bg-zinc-800/80 rounded-md active-press"
             >
               Minimize
             </button>
             <button
+              type="button"
               onClick={onSkip}
               className="p-1 text-zinc-400 hover:text-zinc-200 bg-zinc-800/80 rounded-md active-press"
               aria-label="Skip rest"
@@ -111,7 +125,6 @@ export default function RestTimer({
           </div>
         </div>
 
-        {/* Progress indicator */}
         <div className="w-full bg-zinc-800 h-1.5 rounded-full overflow-hidden mb-3">
           <div
             className={`h-full transition-all duration-300 ${
@@ -121,7 +134,6 @@ export default function RestTimer({
           />
         </div>
 
-        {/* Timer Display & Controls */}
         <div className="flex items-center justify-between">
           <div className="flex items-baseline gap-2">
             <span
@@ -136,18 +148,21 @@ export default function RestTimer({
 
           <div className="flex items-center gap-2">
             <button
+              type="button"
               onClick={() => onAdjustTime(-15)}
               className="px-2.5 py-1.5 rounded-lg bg-zinc-800 text-zinc-300 text-xs font-semibold hover:bg-zinc-700 active-press"
             >
               -15s
             </button>
             <button
+              type="button"
               onClick={() => onAdjustTime(30)}
               className="px-2.5 py-1.5 rounded-lg bg-zinc-800 text-zinc-300 text-xs font-semibold hover:bg-zinc-700 active-press"
             >
               +30s
             </button>
             <button
+              type="button"
               onClick={onSkip}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold active-press ${
                 isFinished

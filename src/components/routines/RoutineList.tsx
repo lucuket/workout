@@ -2,9 +2,14 @@
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Plus, Play, MoreVertical, Edit2, Trash2, Dumbbell, Clock, Layers } from 'lucide-react';
-import { RoutineTemplate, Workout, WorkoutExercise } from '@/lib/types';
-import { getAllRoutines, saveActiveWorkout, deleteRoutine, getLastPerformanceForExercise, getUserPreferences } from '@/lib/db';
+import { Plus, Play, Edit2, Trash2, Layers } from 'lucide-react';
+import { RoutineTemplate } from '@/lib/types';
+import {
+  getAllRoutines,
+  deleteRoutine,
+  startEmptyWorkout,
+  startWorkoutFromRoutine,
+} from '@/lib/db';
 import RoutineEditorModal from './RoutineEditorModal';
 
 export default function RoutineList() {
@@ -18,77 +23,16 @@ export default function RoutineList() {
       const data = await getAllRoutines();
       setRoutines(data);
     };
-    load();
+    void load();
   }, []);
 
   const handleStartWorkout = async (routine: RoutineTemplate) => {
-    const prefs = await getUserPreferences();
-    const workoutExercises: WorkoutExercise[] = [];
-
-    for (let i = 0; i < routine.exercises.length; i++) {
-      const re = routine.exercises[i];
-      const lastPerf = await getLastPerformanceForExercise(re.exercise_id);
-
-      const sets = Array.from({ length: re.target_sets }).map((_, sIdx) => ({
-        id: `s-${Date.now()}-${i}-${sIdx}`,
-        set_number: sIdx + 1,
-        type: 'normal' as const,
-        weight: lastPerf ? lastPerf.weight : 45,
-        reps: lastPerf ? lastPerf.reps : 10,
-        previous_weight: lastPerf ? lastPerf.weight : undefined,
-        previous_reps: lastPerf ? lastPerf.reps : undefined,
-        completed: false,
-      }));
-
-      workoutExercises.push({
-        id: `we-${Date.now()}-${i}`,
-        exercise_id: re.exercise_id,
-        exercise_name: re.exercise_name,
-        muscle_group: re.muscle_group,
-        equipment: re.equipment,
-        order: i + 1,
-        rest_seconds: re.target_rest_seconds || prefs.default_rest_seconds,
-        notes: re.notes,
-        sets,
-      });
-    }
-
-    const newWorkout: Workout = {
-      id: `workout-${Date.now()}`,
-      name: routine.name,
-      routine_id: routine.id,
-      start_time: new Date().toISOString(),
-      duration_seconds: 0,
-      exercises: workoutExercises,
-      total_volume: 0,
-      total_sets: 0,
-      total_reps: 0,
-      pr_count: 0,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-      synced: false,
-    };
-
-    await saveActiveWorkout(newWorkout);
+    await startWorkoutFromRoutine(routine);
     router.push('/workout');
   };
 
   const handleStartEmpty = async () => {
-    const newWorkout: Workout = {
-      id: `workout-${Date.now()}`,
-      name: 'Quick Workout',
-      start_time: new Date().toISOString(),
-      duration_seconds: 0,
-      exercises: [],
-      total_volume: 0,
-      total_sets: 0,
-      total_reps: 0,
-      pr_count: 0,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-      synced: false,
-    };
-    await saveActiveWorkout(newWorkout);
+    await startEmptyWorkout();
     router.push('/workout');
   };
 
@@ -120,13 +64,13 @@ export default function RoutineList() {
 
   return (
     <div className="space-y-4">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-black text-zinc-100 tracking-tight">Routines</h1>
           <p className="text-xs text-zinc-400">Workout templates & splits</p>
         </div>
         <button
+          type="button"
           onClick={() => {
             setEditingRoutine(null);
             setIsEditorOpen(true);
@@ -138,8 +82,8 @@ export default function RoutineList() {
         </button>
       </div>
 
-      {/* Quick Start Empty Workout */}
       <button
+        type="button"
         onClick={handleStartEmpty}
         className="w-full p-4 rounded-2xl bg-gradient-to-r from-zinc-900 to-zinc-900/70 border border-zinc-800 hover:border-emerald-500/50 flex items-center justify-between active-press group transition-all"
       >
@@ -155,7 +99,6 @@ export default function RoutineList() {
         <Play className="w-4 h-4 text-emerald-400 fill-emerald-400" />
       </button>
 
-      {/* Routine Templates List */}
       <div className="space-y-3">
         {routines.map((routine) => (
           <div
@@ -179,27 +122,30 @@ export default function RoutineList() {
 
               <div className="flex items-center gap-1">
                 <button
+                  type="button"
                   onClick={(e) => handleEdit(routine, e)}
                   className="p-2 rounded-lg bg-zinc-800/80 text-zinc-400 hover:text-zinc-100 active-press"
                   title="Edit Routine"
+                  aria-label="Edit routine"
                 >
                   <Edit2 className="w-3.5 h-3.5" />
                 </button>
                 <button
+                  type="button"
                   onClick={(e) => handleDelete(routine.id, e)}
                   className="p-2 rounded-lg bg-zinc-800/80 text-zinc-400 hover:text-red-400 active-press"
                   title="Delete Routine"
+                  aria-label="Delete routine"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
               </div>
             </div>
 
-            {/* Exercises Preview Tags */}
             <div className="flex flex-wrap gap-1.5">
               {routine.exercises.slice(0, 5).map((ex, idx) => (
                 <span
-                  key={idx}
+                  key={`${ex.exercise_id}-${idx}`}
                   className="text-[11px] px-2 py-0.5 rounded-md bg-zinc-950 text-zinc-300 border border-zinc-800 truncate max-w-[140px]"
                 >
                   {ex.exercise_name}
@@ -212,7 +158,6 @@ export default function RoutineList() {
               )}
             </div>
 
-            {/* Footer with Exercises count & Start Button */}
             <div className="flex items-center justify-between pt-2 border-t border-zinc-800/60">
               <div className="flex items-center gap-1.5 text-xs text-zinc-400">
                 <Layers className="w-3.5 h-3.5 text-zinc-500" />
@@ -220,6 +165,7 @@ export default function RoutineList() {
               </div>
 
               <button
+                type="button"
                 onClick={() => handleStartWorkout(routine)}
                 className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold text-xs shadow-md shadow-emerald-500/20 active-press"
               >
@@ -231,7 +177,6 @@ export default function RoutineList() {
         ))}
       </div>
 
-      {/* Routine Editor Modal */}
       <RoutineEditorModal
         routine={editingRoutine}
         isOpen={isEditorOpen}

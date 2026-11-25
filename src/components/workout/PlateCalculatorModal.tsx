@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { X, Scale, Plus, Minus } from 'lucide-react';
 import { calculatePlates } from '@/lib/plate-calculator';
 
@@ -22,12 +22,21 @@ export default function PlateCalculatorModal({
   const [targetWeight, setTargetWeight] = useState(initialWeight);
   const [barWeight, setBarWeight] = useState(defaultBarWeight);
 
+  // Sync local inputs whenever the modal opens for a different exercise or unit
+  useEffect(() => {
+    if (isOpen) {
+      setTargetWeight(initialWeight);
+      setBarWeight(defaultBarWeight);
+    }
+  }, [isOpen, initialWeight, defaultBarWeight]);
+
   if (!isOpen) return null;
 
   const result = calculatePlates(targetWeight, barWeight, unit);
+  const stepIncrement = unit === 'kg' ? 2.5 : 5;
 
   const adjustWeight = (delta: number) => {
-    setTargetWeight((prev) => Math.max(barWeight, prev + delta));
+    setTargetWeight((prev) => Math.max(barWeight, Math.round((prev + delta) * 10) / 10));
   };
 
   return (
@@ -45,8 +54,10 @@ export default function PlateCalculatorModal({
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
             className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-100 bg-zinc-800/60 active-press"
+            aria-label="Close plate calculator"
           >
             <X className="w-4 h-4" />
           </button>
@@ -55,12 +66,15 @@ export default function PlateCalculatorModal({
         {/* Weight Selector */}
         <div className="flex items-center justify-between bg-zinc-950 p-4 rounded-xl border border-zinc-800">
           <div className="space-y-1">
-            <label className="text-[11px] font-medium uppercase tracking-wider text-zinc-400">Target Weight</label>
+            <label className="text-[11px] font-medium uppercase tracking-wider text-zinc-400">
+              Target Weight
+            </label>
             <div className="flex items-baseline gap-1.5">
               <input
                 type="number"
+                inputMode="decimal"
                 value={targetWeight || ''}
-                onChange={(e) => setTargetWeight(Number(e.target.value) || 0)}
+                onChange={(e) => setTargetWeight(Math.max(0, Number(e.target.value) || 0))}
                 className="w-24 bg-transparent text-3xl font-black text-emerald-400 focus:outline-none"
               />
               <span className="text-zinc-400 text-sm font-semibold">{unit}</span>
@@ -69,14 +83,18 @@ export default function PlateCalculatorModal({
 
           <div className="flex gap-1.5">
             <button
-              onClick={() => adjustWeight(-5)}
+              type="button"
+              onClick={() => adjustWeight(-stepIncrement)}
               className="p-2.5 rounded-xl bg-zinc-800 text-zinc-300 active-press hover:bg-zinc-700"
+              aria-label={`Decrease by ${stepIncrement} ${unit}`}
             >
               <Minus className="w-4 h-4" />
             </button>
             <button
-              onClick={() => adjustWeight(5)}
+              type="button"
+              onClick={() => adjustWeight(stepIncrement)}
               className="p-2.5 rounded-xl bg-zinc-800 text-zinc-300 active-press hover:bg-zinc-700"
+              aria-label={`Increase by ${stepIncrement} ${unit}`}
             >
               <Plus className="w-4 h-4" />
             </button>
@@ -94,6 +112,7 @@ export default function PlateCalculatorModal({
             ].map((bar) => (
               <button
                 key={bar.value}
+                type="button"
                 onClick={() => setBarWeight(bar.value)}
                 className={`px-2.5 py-1 rounded-md transition-colors ${
                   barWeight === bar.value
@@ -110,20 +129,19 @@ export default function PlateCalculatorModal({
         {/* Visual Barbell Graphic */}
         <div className="bg-zinc-950 p-4 rounded-xl border border-zinc-800 flex flex-col items-center">
           <div className="text-xs text-zinc-400 mb-3 flex justify-between w-full">
-            <span>Per Side: <strong className="text-zinc-100">{result.weightPerSide} {unit}</strong></span>
+            <span>
+              Per Side: <strong className="text-zinc-100">{result.weightPerSide} {unit}</strong>
+            </span>
             {result.remainder > 0 && (
               <span className="text-amber-400">Remainder: {result.remainder} {unit}</span>
             )}
           </div>
 
-          {/* Bar Diagram */}
           <div className="w-full flex items-center justify-center py-4 px-2">
-            {/* Left Bar Sleeve */}
             <div className="h-4 w-12 bg-zinc-700 rounded-l-md border border-zinc-600 flex items-center justify-center">
               <span className="text-[8px] text-zinc-400 font-mono">collar</span>
             </div>
 
-            {/* Plates on Bar */}
             <div className="flex items-center gap-1 bg-zinc-900/90 px-3 py-2 border-y border-zinc-700 min-h-[90px]">
               {result.platesPerSide.length === 0 ? (
                 <span className="text-xs text-zinc-600 italic px-4">No plates needed (Empty bar)</span>
@@ -131,7 +149,6 @@ export default function PlateCalculatorModal({
                 result.platesPerSide.map((plate) => (
                   <div key={plate.weight} className="flex gap-1">
                     {Array.from({ length: plate.count }).map((_, idx) => {
-                      // Visual plate height scaled by weight
                       const heightPx = Math.max(36, Math.min(84, 30 + plate.weight * 1.2));
                       return (
                         <div
@@ -153,7 +170,6 @@ export default function PlateCalculatorModal({
               )}
             </div>
 
-            {/* Main Bar Center */}
             <div className="h-3 flex-1 bg-zinc-600 rounded-r-md border border-zinc-500 flex items-center justify-center">
               <span className="text-[9px] text-zinc-300 font-mono font-semibold">BAR</span>
             </div>
@@ -189,6 +205,7 @@ export default function PlateCalculatorModal({
         </div>
 
         <button
+          type="button"
           onClick={onClose}
           className="w-full py-2.5 rounded-xl bg-zinc-800 text-zinc-200 hover:bg-zinc-700 font-semibold text-sm active-press"
         >

@@ -1,9 +1,11 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { X, Plus, Trash2, ArrowUpDown } from 'lucide-react';
-import { RoutineTemplate, RoutineExerciseTemplate, Exercise } from '@/lib/types';
+import { X, Plus, Trash2, ArrowUp, ArrowDown } from 'lucide-react';
+import { RoutineCategory, RoutineTemplate, RoutineExerciseTemplate, Exercise } from '@/lib/types';
 import { getAllExercises, saveRoutine } from '@/lib/db';
+import { generateId, ROUTINE_CATEGORIES } from '@/lib/constants';
+import ExercisePickerModal from '@/components/shared/ExercisePickerModal';
 
 interface RoutineEditorModalProps {
   routine: RoutineTemplate | null;
@@ -19,14 +21,11 @@ export default function RoutineEditorModal({
   onSaved,
 }: RoutineEditorModalProps) {
   const [name, setName] = useState('');
-  const [category, setCategory] = useState<any>('Push');
+  const [category, setCategory] = useState<RoutineCategory>('Push');
   const [description, setDescription] = useState('');
   const [exercises, setExercises] = useState<RoutineExerciseTemplate[]>([]);
-
-  // Exercise Picker Modal within Editor
   const [isPickerOpen, setIsPickerOpen] = useState(false);
   const [allExercises, setAllExercises] = useState<Exercise[]>([]);
-  const [pickerSearch, setPickerSearch] = useState('');
 
   useEffect(() => {
     if (routine) {
@@ -47,7 +46,7 @@ export default function RoutineEditorModal({
       const data = await getAllExercises();
       setAllExercises(data);
     };
-    load();
+    void load();
   }, []);
 
   if (!isOpen) return null;
@@ -68,29 +67,43 @@ export default function RoutineEditorModal({
   };
 
   const handleUpdateExercise = (index: number, fields: Partial<RoutineExerciseTemplate>) => {
-    setExercises((prev) => {
-      const copy = [...prev];
-      copy[index] = { ...copy[index], ...fields };
-      return copy;
-    });
+    setExercises((prev) =>
+      prev.map((item, idx) => (idx === index ? { ...item, ...fields } : item))
+    );
   };
 
   const handleRemoveExercise = (index: number) => {
-    setExercises((prev) => prev.filter((_, idx) => idx !== index));
+    setExercises((prev) =>
+      prev
+        .filter((_, idx) => idx !== index)
+        .map((item, idx) => ({ ...item, order: idx + 1 }))
+    );
+  };
+
+  const handleMoveExercise = (index: number, direction: -1 | 1) => {
+    setExercises((prev) => {
+      const targetIndex = index + direction;
+      if (targetIndex < 0 || targetIndex >= prev.length) return prev;
+      const copy = [...prev];
+      const [moved] = copy.splice(index, 1);
+      copy.splice(targetIndex, 0, moved);
+      return copy.map((item, idx) => ({ ...item, order: idx + 1 }));
+    });
   };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
 
+    const nowIso = new Date().toISOString();
     const saved: RoutineTemplate = {
-      id: routine?.id || `routine-${Date.now()}`,
+      id: routine?.id || generateId('routine'),
       name: name.trim(),
       category,
       description: description.trim() || undefined,
-      exercises,
-      created_at: routine?.created_at || new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      exercises: exercises.map((ex, idx) => ({ ...ex, order: idx + 1 })),
+      created_at: routine?.created_at || nowIso,
+      updated_at: nowIso,
     };
 
     await saveRoutine(saved);
@@ -101,14 +114,15 @@ export default function RoutineEditorModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
       <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-3xl p-5 shadow-2xl space-y-4 max-h-[90vh] flex flex-col">
-        {/* Header */}
         <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
           <h2 className="font-bold text-base text-zinc-100">
             {routine ? 'Edit Routine' : 'New Routine Template'}
           </h2>
           <button
+            type="button"
             onClick={onClose}
             className="p-1.5 rounded-lg bg-zinc-800 text-zinc-400 hover:text-zinc-100 active-press"
+            aria-label="Close modal"
           >
             <X className="w-4 h-4" />
           </button>
@@ -136,10 +150,10 @@ export default function RoutineEditorModal({
               </label>
               <select
                 value={category}
-                onChange={(e) => setCategory(e.target.value)}
+                onChange={(e) => setCategory(e.target.value as RoutineCategory)}
                 className="w-full px-3 py-2.5 bg-zinc-950 border border-zinc-800 rounded-xl text-sm text-zinc-100 focus:outline-none focus:border-emerald-500"
               >
-                {['Push', 'Pull', 'Legs', 'Upper', 'Lower', 'Full Body', 'Custom'].map((cat) => (
+                {ROUTINE_CATEGORIES.map((cat) => (
                   <option key={cat} value={cat}>
                     {cat}
                   </option>
@@ -161,7 +175,6 @@ export default function RoutineEditorModal({
             </div>
           </div>
 
-          {/* Exercises in this template */}
           <div className="space-y-2 pt-1">
             <div className="flex items-center justify-between">
               <label className="text-xs font-bold text-zinc-200">
@@ -192,25 +205,48 @@ export default function RoutineEditorModal({
               <div className="space-y-2">
                 {exercises.map((ex, idx) => (
                   <div
-                    key={idx}
+                    key={`${ex.exercise_id}-${idx}`}
                     className="p-3 bg-zinc-950 rounded-xl border border-zinc-800/80 space-y-2"
                   >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className="w-5 h-5 rounded-full bg-zinc-800 text-zinc-400 text-[11px] font-mono flex items-center justify-center font-bold">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="w-5 h-5 rounded-full bg-zinc-800 text-zinc-400 text-[11px] font-mono flex items-center justify-center font-bold flex-shrink-0">
                           {idx + 1}
                         </span>
-                        <span className="font-bold text-xs text-zinc-200 truncate max-w-[200px]">
+                        <span className="font-bold text-xs text-zinc-200 truncate">
                           {ex.exercise_name}
                         </span>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveExercise(idx)}
-                        className="text-zinc-500 hover:text-red-400 p-1 active-press"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      <div className="flex items-center gap-0.5 flex-shrink-0">
+                        {idx > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => handleMoveExercise(idx, -1)}
+                            className="text-zinc-500 hover:text-zinc-200 p-1 active-press"
+                            aria-label="Move up"
+                          >
+                            <ArrowUp className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        {idx < exercises.length - 1 && (
+                          <button
+                            type="button"
+                            onClick={() => handleMoveExercise(idx, 1)}
+                            className="text-zinc-500 hover:text-zinc-200 p-1 active-press"
+                            aria-label="Move down"
+                          >
+                            <ArrowDown className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveExercise(idx)}
+                          className="text-zinc-500 hover:text-red-400 p-1 active-press"
+                          aria-label="Remove exercise"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
 
                     <div className="grid grid-cols-3 gap-2 text-xs">
@@ -218,10 +254,11 @@ export default function RoutineEditorModal({
                         <span className="text-[10px] text-zinc-500 block">Sets</span>
                         <input
                           type="number"
+                          min={1}
                           value={ex.target_sets}
                           onChange={(e) =>
                             handleUpdateExercise(idx, {
-                              target_sets: parseInt(e.target.value, 10) || 1,
+                              target_sets: Math.max(1, parseInt(e.target.value, 10) || 1),
                             })
                           }
                           className="w-full bg-zinc-900 border border-zinc-800 rounded-lg py-1 px-2 text-zinc-100 font-mono text-center font-bold"
@@ -245,10 +282,11 @@ export default function RoutineEditorModal({
                         <span className="text-[10px] text-zinc-500 block">Rest (s)</span>
                         <input
                           type="number"
+                          min={10}
                           value={ex.target_rest_seconds}
                           onChange={(e) =>
                             handleUpdateExercise(idx, {
-                              target_rest_seconds: parseInt(e.target.value, 10) || 60,
+                              target_rest_seconds: Math.max(10, parseInt(e.target.value, 10) || 60),
                             })
                           }
                           className="w-full bg-zinc-900 border border-zinc-800 rounded-lg py-1 px-2 text-zinc-100 font-mono text-center font-bold"
@@ -278,56 +316,13 @@ export default function RoutineEditorModal({
           </div>
         </form>
 
-        {/* Exercise Picker Sub-Modal */}
-        {isPickerOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85">
-            <div className="w-full max-w-sm bg-zinc-900 border border-zinc-800 rounded-2xl p-4 shadow-2xl space-y-3 max-h-[80vh] flex flex-col">
-              <div className="flex items-center justify-between pb-2 border-b border-zinc-800">
-                <h3 className="font-bold text-sm text-zinc-100">Select Exercise</h3>
-                <button
-                  type="button"
-                  onClick={() => setIsPickerOpen(false)}
-                  className="p-1 rounded-lg bg-zinc-800 text-zinc-400 hover:text-zinc-100"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              <input
-                type="text"
-                value={pickerSearch}
-                onChange={(e) => setPickerSearch(e.target.value)}
-                placeholder="Search..."
-                className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-xl text-xs text-zinc-100"
-                autoFocus
-              />
-
-              <div className="flex-1 overflow-y-auto divide-y divide-zinc-800/60">
-                {allExercises
-                  .filter((ex) =>
-                    ex.name.toLowerCase().includes(pickerSearch.toLowerCase()) ||
-                    ex.muscle_group.toLowerCase().includes(pickerSearch.toLowerCase())
-                  )
-                  .map((ex) => (
-                    <button
-                      key={ex.id}
-                      type="button"
-                      onClick={() => handleAddExercise(ex)}
-                      className="w-full py-2.5 px-2 text-left hover:bg-zinc-800/70 rounded-lg flex items-center justify-between active-press"
-                    >
-                      <div>
-                        <div className="text-xs font-bold text-zinc-200">{ex.name}</div>
-                        <div className="text-[10px] text-zinc-400">
-                          {ex.muscle_group} • {ex.equipment}
-                        </div>
-                      </div>
-                      <Plus className="w-3.5 h-3.5 text-emerald-400" />
-                    </button>
-                  ))}
-              </div>
-            </div>
-          </div>
-        )}
+        <ExercisePickerModal
+          isOpen={isPickerOpen}
+          title="Select Exercise"
+          exercises={allExercises}
+          onSelect={handleAddExercise}
+          onClose={() => setIsPickerOpen(false)}
+        />
       </div>
     </div>
   );

@@ -3,19 +3,20 @@ import './globals.css';
 import Header from '@/components/layout/Header';
 import BottomNav from '@/components/layout/BottomNav';
 import PwaRegister from '@/components/layout/PwaRegister';
+import { withBasePath } from '@/lib/constants';
 
 export const metadata: Metadata = {
   title: 'ApexLift - Gym Workout Tracker',
   description: 'Mobile-first PWA gym workout tracker with offline logging, analytics, and plate calculator',
-  manifest: '/manifest.json',
+  manifest: withBasePath('/manifest.json'),
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',
     title: 'ApexLift',
   },
   icons: {
-    icon: '/icons/icon-192.svg',
-    apple: '/icons/icon-192.svg',
+    icon: withBasePath('/icons/icon-192.svg'),
+    apple: withBasePath('/icons/icon-192.svg'),
   },
 };
 

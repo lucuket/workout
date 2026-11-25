@@ -1,7 +1,8 @@
 import type { NextConfig } from "next";
 
-const isGithubPages = process.env.GITHUB_ACTIONS || process.env.DEPLOY_TARGET === "gh-pages";
+const isGithubPages = Boolean(process.env.GITHUB_ACTIONS || process.env.DEPLOY_TARGET === "gh-pages");
 const repoName = process.env.NEXT_PUBLIC_REPO_NAME || "workout";
+const basePath = isGithubPages ? `/${repoName}` : "";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
@@ -10,8 +11,11 @@ const nextConfig: NextConfig = {
   images: {
     unoptimized: true,
   },
-  basePath: isGithubPages ? `/${repoName}` : "",
-  assetPrefix: isGithubPages ? `/${repoName}/` : undefined,
+  basePath,
+  assetPrefix: isGithubPages ? `${basePath}/` : undefined,
+  env: {
+    NEXT_PUBLIC_BASE_PATH: basePath,
+  },
 };
 
 export default nextConfig;

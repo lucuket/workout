@@ -2,44 +2,49 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { Dumbbell, Cloud, CloudOff, RefreshCw, Settings, Play } from 'lucide-react';
+import { usePathname, useRouter } from 'next/navigation';
+import { Dumbbell, CloudOff, RefreshCw, Settings, Play, Lock } from 'lucide-react';
 import { subscribeSyncState, SyncStatus, checkAndProcessSync } from '@/lib/sync';
-import { getActiveWorkout } from '@/lib/db';
+import { getActiveWorkout, subscribeActiveWorkout } from '@/lib/db';
 import { Workout } from '@/lib/types';
 
 export default function Header() {
   const pathname = usePathname();
+  const router = useRouter();
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('local_only');
   const [pendingCount, setPendingCount] = useState(0);
   const [activeWorkout, setActiveWorkout] = useState<Workout | null>(null);
 
   useEffect(() => {
-    const unsub = subscribeSyncState((status, count) => {
+    const unsubSync = subscribeSyncState((status, count) => {
       setSyncStatus(status);
       setPendingCount(count);
     });
 
-    const checkActive = async () => {
-      try {
-        const active = await getActiveWorkout();
-        setActiveWorkout(active);
-      } catch {
-        // Ignore in SSR
-      }
-    };
+    const unsubActive = subscribeActiveWorkout((active) => {
+      setActiveWorkout(active);
+    });
 
-    checkActive();
-    const interval = setInterval(checkActive, 3000);
+    getActiveWorkout()
+      .then((active) => setActiveWorkout(active))
+      .catch(() => {
+        // Ignore in SSR
+      });
 
     return () => {
-      unsub();
-      clearInterval(interval);
+      unsubSync();
+      unsubActive();
     };
-  }, [pathname]);
+  }, []);
+
+  const isOnWorkoutRoute = pathname === '/workout' || pathname?.startsWith('/workout/');
 
   const handleSyncClick = () => {
-    checkAndProcessSync();
+    if (syncStatus === 'auth_required') {
+      router.push('/settings');
+      return;
+    }
+    void checkAndProcessSync();
   };
 
   return (
@@ -61,8 +66,7 @@ export default function Header() {
 
         {/* Right Action Icons: Active workout indicator + Sync Status + Settings */}
         <div className="flex items-center gap-2">
-          {/* Active Workout Banner / Chip if in progress and not currently on /workout */}
-          {activeWorkout && pathname !== '/workout' && (
+          {activeWorkout && !isOnWorkoutRoute && (
             <Link
               href="/workout"
               className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-medium rounded-full animate-pulse-subtle active-press"
@@ -72,15 +76,18 @@ export default function Header() {
             </Link>
           )}
 
-          {/* Sync Status Pill */}
           <button
             onClick={handleSyncClick}
             className="flex items-center gap-1 px-2 py-1 rounded-full text-[11px] font-mono border transition-colors active-press bg-zinc-900 border-zinc-800"
-            title="Tap to sync with cloud"
+            title={
+              syncStatus === 'auth_required'
+                ? 'Sign in via Settings to sync with cloud'
+                : 'Tap to sync with cloud'
+            }
           >
             {syncStatus === 'synced' && (
               <>
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                 <span className="text-zinc-400">Synced</span>
               </>
             )}
@@ -93,7 +100,9 @@ export default function Header() {
             {syncStatus === 'offline' && (
               <>
                 <CloudOff className="w-3 h-3 text-amber-400" />
-                <span className="text-amber-400">{pendingCount > 0 ? `${pendingCount} offline` : 'Offline'}</span>
+                <span className="text-amber-400">
+                  {pendingCount > 0 ? `${pendingCount} offline` : 'Offline'}
+                </span>
               </>
             )}
             {syncStatus === 'pending' && (
@@ -102,15 +111,20 @@ export default function Header() {
                 <span className="text-amber-400">{pendingCount} pending</span>
               </>
             )}
+            {syncStatus === 'auth_required' && (
+              <>
+                <Lock className="w-3 h-3 text-amber-400" />
+                <span className="text-amber-400">Sign in</span>
+              </>
+            )}
             {syncStatus === 'local_only' && (
               <>
-                <span className="w-1.5 h-1.5 rounded-full bg-blue-400"></span>
+                <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
                 <span className="text-zinc-400">Local DB</span>
               </>
             )}
           </button>
 
-          {/* Settings */}
           <Link
             href="/settings"
             className="w-8 h-8 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-400 hover:text-zinc-100 active-press"

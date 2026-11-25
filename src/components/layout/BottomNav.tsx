@@ -4,25 +4,25 @@ import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Home, Dumbbell, FolderKanban, TrendingUp, CalendarDays, BookOpen } from 'lucide-react';
-import { getActiveWorkout } from '@/lib/db';
+import { getActiveWorkout, subscribeActiveWorkout } from '@/lib/db';
 
 export default function BottomNav() {
   const pathname = usePathname();
   const [hasActiveSession, setHasActiveSession] = useState(false);
 
   useEffect(() => {
-    const checkActive = async () => {
-      try {
-        const active = await getActiveWorkout();
-        setHasActiveSession(!!active);
-      } catch {
-        // Ignore
-      }
-    };
-    checkActive();
-    const interval = setInterval(checkActive, 3000);
-    return () => clearInterval(interval);
-  }, [pathname]);
+    const unsub = subscribeActiveWorkout((active) => {
+      setHasActiveSession(Boolean(active));
+    });
+
+    getActiveWorkout()
+      .then((active) => setHasActiveSession(Boolean(active)))
+      .catch(() => {
+        // Ignore in SSR
+      });
+
+    return unsub;
+  }, []);
 
   const navItems = [
     { label: 'Home', href: '/', icon: Home },
@@ -39,11 +39,17 @@ export default function BottomNav() {
     { label: 'History', href: '/history', icon: CalendarDays },
   ];
 
+  const isRouteActive = (href: string) => {
+    const normalized = pathname?.replace(/\/$/, '') || '/';
+    if (href === '/') return normalized === '/';
+    return normalized === href || normalized.startsWith(`${href}/`);
+  };
+
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-40 bg-zinc-950/95 backdrop-blur-lg border-t border-zinc-800/80 pb-safe">
       <div className="max-w-xl mx-auto flex items-center justify-around px-2 py-2">
         {navItems.map((item) => {
-          const isActive = pathname === item.href;
+          const isActive = isRouteActive(item.href);
           const Icon = item.icon;
 
           if (item.isAction) {

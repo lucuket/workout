@@ -1,14 +1,16 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { X, Trophy, Flame, Dumbbell, Calendar, Info } from 'lucide-react';
-import { Exercise, PersonalRecord, Workout } from '@/lib/types';
-import { calculatePersonalRecords, getAllWorkouts } from '@/lib/db';
+import { X, Trophy, Flame, Dumbbell, Calendar, Info, Trash2 } from 'lucide-react';
+import { Exercise, PersonalRecord } from '@/lib/types';
+import { calculatePersonalRecords, deleteCustomExercise, getAllWorkouts } from '@/lib/db';
+import { toLocalDateKey } from '@/lib/constants';
 
 interface ExerciseDetailModalProps {
   exercise: Exercise | null;
   isOpen: boolean;
   onClose: () => void;
+  onDeleted?: (exerciseId: string) => void;
   weightUnit?: string;
 }
 
@@ -16,19 +18,24 @@ export default function ExerciseDetailModal({
   exercise,
   isOpen,
   onClose,
+  onDeleted,
   weightUnit = 'lbs',
 }: ExerciseDetailModalProps) {
   const [pr, setPr] = useState<PersonalRecord | null>(null);
-  const [exerciseHistory, setExerciseHistory] = useState<{ date: string; sets: { weight: number; reps: number }[] }[]>([]);
+  const [exerciseHistory, setExerciseHistory] = useState<
+    { date: string; sets: { weight: number; reps: number }[] }[]
+  >([]);
 
   useEffect(() => {
-    if (!exercise) return;
+    if (!exercise || !isOpen) return;
 
     const loadData = async () => {
-      const prs = await calculatePersonalRecords();
+      const [prs, allWorkouts] = await Promise.all([
+        calculatePersonalRecords(),
+        getAllWorkouts(),
+      ]);
       setPr(prs[exercise.id] || null);
 
-      const allWorkouts = await getAllWorkouts();
       const historyList: { date: string; sets: { weight: number; reps: number }[] }[] = [];
 
       for (const w of allWorkouts) {
@@ -39,24 +46,32 @@ export default function ExerciseDetailModal({
             .map((s) => ({ weight: s.weight, reps: s.reps }));
           if (completedSets.length > 0) {
             historyList.push({
-              date: w.start_time.split('T')[0],
+              date: toLocalDateKey(w.start_time),
               sets: completedSets,
             });
           }
         }
       }
-      setExerciseHistory(historyList.slice(0, 8)); // Top 8 recent sessions
+      setExerciseHistory(historyList.slice(0, 8));
     };
 
-    loadData();
-  }, [exercise]);
+    void loadData();
+  }, [exercise, isOpen]);
 
   if (!isOpen || !exercise) return null;
+
+  const handleDelete = async () => {
+    if (!exercise.is_custom) return;
+    if (confirm(`Delete custom exercise "${exercise.name}"?`)) {
+      await deleteCustomExercise(exercise.id);
+      if (onDeleted) onDeleted(exercise.id);
+      onClose();
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
       <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-3xl p-5 shadow-2xl space-y-4 max-h-[90vh] flex flex-col overflow-hidden">
-        {/* Header */}
         <div className="flex items-start justify-between border-b border-zinc-800 pb-3">
           <div>
             <div className="flex items-center gap-2">
@@ -67,16 +82,30 @@ export default function ExerciseDetailModal({
             </div>
             <h2 className="font-black text-xl text-zinc-100 mt-1">{exercise.name}</h2>
           </div>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-lg bg-zinc-800 text-zinc-400 hover:text-zinc-100 active-press"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-1">
+            {exercise.is_custom && (
+              <button
+                type="button"
+                onClick={handleDelete}
+                className="p-1.5 rounded-lg bg-zinc-800 text-zinc-400 hover:text-red-400 active-press"
+                title="Delete custom exercise"
+                aria-label="Delete custom exercise"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-1.5 rounded-lg bg-zinc-800 text-zinc-400 hover:text-zinc-100 active-press"
+              aria-label="Close modal"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto space-y-4 pr-1">
-          {/* PR Showcase Cards */}
           {pr ? (
             <div className="grid grid-cols-3 gap-2">
               <div className="bg-zinc-950 p-2.5 rounded-xl border border-zinc-800 text-center">
@@ -101,7 +130,6 @@ export default function ExerciseDetailModal({
             </div>
           )}
 
-          {/* Instructions */}
           {exercise.instructions && (
             <div className="bg-zinc-950/80 p-3.5 rounded-xl border border-zinc-800/80 space-y-1">
               <div className="flex items-center gap-1.5 text-xs font-bold text-zinc-300">
@@ -112,7 +140,6 @@ export default function ExerciseDetailModal({
             </div>
           )}
 
-          {/* History */}
           <div className="space-y-2">
             <div className="flex items-center justify-between text-xs font-bold text-zinc-300">
               <div className="flex items-center gap-1.5">
@@ -130,7 +157,7 @@ export default function ExerciseDetailModal({
               <div className="space-y-1.5">
                 {exerciseHistory.map((h, idx) => (
                   <div
-                    key={idx}
+                    key={`${h.date}-${idx}`}
                     className="p-2.5 bg-zinc-950 rounded-xl border border-zinc-800/80 flex items-center justify-between text-xs"
                   >
                     <span className="font-mono text-zinc-400 text-[11px]">{h.date}</span>
@@ -152,6 +179,7 @@ export default function ExerciseDetailModal({
         </div>
 
         <button
+          type="button"
           onClick={onClose}
           className="w-full py-2.5 rounded-xl bg-zinc-800 text-zinc-200 font-semibold text-sm hover:bg-zinc-700 active-press"
         >

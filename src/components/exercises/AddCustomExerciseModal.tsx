@@ -1,44 +1,16 @@
 'use client';
 
 import React, { useState } from 'react';
-import { X, Plus } from 'lucide-react';
+import { X } from 'lucide-react';
 import { Exercise, MuscleGroup, Equipment } from '@/lib/types';
 import { addCustomExercise } from '@/lib/db';
+import { EQUIPMENT_OPTIONS, generateId, MUSCLE_GROUPS } from '@/lib/constants';
 
 interface AddCustomExerciseModalProps {
   isOpen: boolean;
   onClose: () => void;
   onCreated: (exercise: Exercise) => void;
 }
-
-const MUSCLE_GROUPS: MuscleGroup[] = [
-  'Chest',
-  'Back',
-  'Shoulders',
-  'Quads',
-  'Hamstrings',
-  'Glutes',
-  'Calves',
-  'Biceps',
-  'Triceps',
-  'Forearms',
-  'Core',
-  'Cardio',
-  'Full Body',
-];
-
-const EQUIPMENT_OPTIONS: Equipment[] = [
-  'Barbell',
-  'Dumbbell',
-  'Cable',
-  'Machine',
-  'Bodyweight',
-  'Kettlebell',
-  'Smith Machine',
-  'Bands',
-  'Cardio Machine',
-  'Other',
-];
 
 export default function AddCustomExerciseModal({
   isOpen,
@@ -52,12 +24,24 @@ export default function AddCustomExerciseModal({
 
   if (!isOpen) return null;
 
+  const resetForm = () => {
+    setName('');
+    setMuscleGroup('Chest');
+    setEquipment('Barbell');
+    setInstructions('');
+  };
+
+  const handleClose = () => {
+    resetForm();
+    onClose();
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
 
     const newEx: Exercise = {
-      id: `custom-${Date.now()}`,
+      id: generateId('custom'),
       name: name.trim(),
       muscle_group: muscleGroup,
       equipment,
@@ -66,8 +50,9 @@ export default function AddCustomExerciseModal({
       created_at: new Date().toISOString(),
     };
 
-    await addCustomExercise(newEx);
-    onCreated(newEx);
+    const saved = await addCustomExercise(newEx);
+    resetForm();
+    onCreated(saved);
     onClose();
   };
 
@@ -77,8 +62,10 @@ export default function AddCustomExerciseModal({
         <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
           <h2 className="font-bold text-base text-zinc-100">Create Custom Exercise</h2>
           <button
-            onClick={onClose}
+            type="button"
+            onClick={handleClose}
             className="p-1.5 rounded-lg bg-zinc-800 text-zinc-400 hover:text-zinc-100 active-press"
+            aria-label="Close modal"
           >
             <X className="w-4 h-4" />
           </button>
@@ -151,7 +138,7 @@ export default function AddCustomExerciseModal({
           <div className="pt-2 flex gap-2">
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleClose}
               className="flex-1 py-2.5 rounded-xl bg-zinc-800 text-zinc-300 font-semibold text-sm active-press"
             >
               Cancel

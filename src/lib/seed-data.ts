@@ -1,7 +1,9 @@
-import { Exercise, RoutineTemplate, Workout, BodyweightEntry } from './types';
+import { Exercise, RoutineTemplate, Workout, WorkoutExercise, BodyweightEntry } from './types';
+import { toLocalDateKey } from './constants';
+import { calculateWorkoutStats } from './workout-utils';
 
 export const SEED_EXERCISES: Exercise[] = [
-  // Chest
+  // Chest (12)
   { id: 'ex-bench-press', name: 'Barbell Bench Press', muscle_group: 'Chest', secondary_muscles: ['Triceps', 'Shoulders'], equipment: 'Barbell', instructions: 'Lie back on a flat bench. Grip barbell slightly wider than shoulder-width. Lower bar to mid-chest, press up explosively.' },
   { id: 'ex-incline-db-press', name: 'Incline Dumbbell Press', muscle_group: 'Chest', secondary_muscles: ['Shoulders', 'Triceps'], equipment: 'Dumbbell', instructions: 'Set bench to 30-45 degrees. Press dumbbells upward, squeezing upper pecs at the peak.' },
   { id: 'ex-decline-bench-press', name: 'Decline Barbell Bench Press', muscle_group: 'Chest', secondary_muscles: ['Triceps'], equipment: 'Barbell', instructions: 'Secured on decline bench. Lower to lower chest, press upward.' },
@@ -12,8 +14,10 @@ export const SEED_EXERCISES: Exercise[] = [
   { id: 'ex-push-up', name: 'Push-Up', muscle_group: 'Chest', secondary_muscles: ['Triceps', 'Core'], equipment: 'Bodyweight', instructions: 'Hands shoulder-width apart, rigid core. Lower chest to floor and press.' },
   { id: 'ex-incline-barbell-press', name: 'Incline Barbell Bench Press', muscle_group: 'Chest', secondary_muscles: ['Shoulders', 'Triceps'], equipment: 'Barbell', instructions: 'Set bench to 30 degrees. Lower to upper chest, press vertically.' },
   { id: 'ex-smith-bench-press', name: 'Smith Machine Bench Press', muscle_group: 'Chest', secondary_muscles: ['Triceps'], equipment: 'Smith Machine', instructions: 'Fixed bar path allows maximal isolation of pectoralis major.' },
+  { id: 'ex-machine-chest-press', name: 'Machine Chest Press', muscle_group: 'Chest', secondary_muscles: ['Triceps', 'Shoulders'], equipment: 'Machine', instructions: 'Adjust seat so handles align with mid-chest. Press smoothly without locking elbows.' },
+  { id: 'ex-incline-db-fly', name: 'Incline Dumbbell Fly', muscle_group: 'Chest', secondary_muscles: ['Shoulders'], equipment: 'Dumbbell', instructions: 'Maintain soft elbow bend. Open arms wide for a deep upper-chest stretch, then arc together.' },
 
-  // Back
+  // Back (13)
   { id: 'ex-deadlift', name: 'Conventional Barbell Deadlift', muscle_group: 'Back', secondary_muscles: ['Hamstrings', 'Glutes', 'Forearms'], equipment: 'Barbell', instructions: 'Feet hip-width, grip just outside knees. Hips back, neutral spine, pull floor away.' },
   { id: 'ex-barbell-row', name: 'Bent-Over Barbell Row', muscle_group: 'Back', secondary_muscles: ['Biceps', 'Forearms'], equipment: 'Barbell', instructions: 'Hinge forward 45-70 degrees. Row bar to lower ribcage pulling with elbows.' },
   { id: 'ex-pull-up', name: 'Pull-Up', muscle_group: 'Back', secondary_muscles: ['Biceps'], equipment: 'Bodyweight', instructions: 'Overhand grip wider than shoulders. Pull chin over bar by engaging lats.' },
@@ -25,8 +29,10 @@ export const SEED_EXERCISES: Exercise[] = [
   { id: 'ex-face-pull', name: 'Cable Face Pull', muscle_group: 'Back', secondary_muscles: ['Shoulders'], equipment: 'Cable', instructions: 'Rope attachment at eye level. Pull towards face while rotating hands outward.' },
   { id: 'ex-straight-arm-pulldown', name: 'Straight-Arm Lat Pulldown', muscle_group: 'Back', equipment: 'Cable', instructions: 'Arms extended with slight elbow bend. Push bar in arc down to thighs.' },
   { id: 'ex-back-extension', name: 'Hyperextension / Back Extension', muscle_group: 'Back', secondary_muscles: ['Glutes', 'Hamstrings'], equipment: 'Bodyweight', instructions: 'Hinge at hips on 45-degree roman chair. Contract lower back and glutes.' },
+  { id: 'ex-chest-supported-row', name: 'Chest-Supported Dumbbell Row', muscle_group: 'Back', secondary_muscles: ['Biceps', 'Shoulders'], equipment: 'Dumbbell', instructions: 'Lie chest-down on an incline bench. Row dumbbells to hips without lower back strain.' },
+  { id: 'ex-pendlay-row', name: 'Pendlay Row', muscle_group: 'Back', secondary_muscles: ['Biceps', 'Forearms'], equipment: 'Barbell', instructions: 'Torso parallel to floor. Pull bar explosively from dead stop on floor to lower chest.' },
 
-  // Shoulders
+  // Shoulders (11)
   { id: 'ex-overhead-press', name: 'Overhead Barbell Press (OHP)', muscle_group: 'Shoulders', secondary_muscles: ['Triceps', 'Core'], equipment: 'Barbell', instructions: 'Standing tall with tight glutes. Press bar vertically overhead, locking out.' },
   { id: 'ex-seated-db-shoulder-press', name: 'Seated Dumbbell Shoulder Press', muscle_group: 'Shoulders', secondary_muscles: ['Triceps'], equipment: 'Dumbbell', instructions: 'Sit on upright bench. Press dumbbells overhead with neutral or pronated grip.' },
   { id: 'ex-lateral-raise', name: 'Dumbbell Lateral Raise', muscle_group: 'Shoulders', equipment: 'Dumbbell', instructions: 'Raise arms out to sides until parallel to floor. Lead with elbows, control descent.' },
@@ -36,31 +42,42 @@ export const SEED_EXERCISES: Exercise[] = [
   { id: 'ex-arnold-press', name: 'Arnold Press', muscle_group: 'Shoulders', secondary_muscles: ['Triceps'], equipment: 'Dumbbell', instructions: 'Start with palms facing chest; rotate outward as you press overhead.' },
   { id: 'ex-shrug', name: 'Barbell Shrug', muscle_group: 'Shoulders', secondary_muscles: ['Back'], equipment: 'Barbell', instructions: 'Elevate traps straight up towards ears. Hold peak squeeze for 1 second.' },
   { id: 'ex-db-shrug', name: 'Dumbbell Shrug', muscle_group: 'Shoulders', equipment: 'Dumbbell', instructions: 'Hold dumbbells by sides. Shrug upward without rolling shoulders.' },
+  { id: 'ex-machine-shoulder-press', name: 'Machine Shoulder Press', muscle_group: 'Shoulders', secondary_muscles: ['Triceps'], equipment: 'Machine', instructions: 'Press handles vertically with controlled eccentric phase.' },
+  { id: 'ex-upright-row', name: 'Cable Upright Row', muscle_group: 'Shoulders', secondary_muscles: ['Biceps'], equipment: 'Cable', instructions: 'Pull bar vertically along torso leading with elbows to chest height.' },
 
-  // Quads
+  // Quads (11)
   { id: 'ex-barbell-squat', name: 'Barbell Back Squat', muscle_group: 'Quads', secondary_muscles: ['Glutes', 'Hamstrings', 'Core'], equipment: 'Barbell', instructions: 'Bar rested on traps. Break at hips and knees, descend below parallel, drive up.' },
   { id: 'ex-front-squat', name: 'Barbell Front Squat', muscle_group: 'Quads', secondary_muscles: ['Core', 'Glutes'], equipment: 'Barbell', instructions: 'Bar in front rack position. Upright torso, deep knee flexion.' },
   { id: 'ex-leg-press', name: 'Leg Press', muscle_group: 'Quads', secondary_muscles: ['Glutes'], equipment: 'Machine', instructions: 'Feet shoulder-width on carriage. Lower weight until 90 degrees knee bend, press.' },
-  { id: 'ex-hack-squat', name: 'Hack Squat Machine', muscle_group: 'Quads', secondary_muscles: ['Glutes'], equipment: 'Machine', instructions: 'Great quad quad recruitment with back fully stabilized.' },
+  { id: 'ex-hack-squat', name: 'Hack Squat Machine', muscle_group: 'Quads', secondary_muscles: ['Glutes'], equipment: 'Machine', instructions: 'Great quad recruitment with back fully stabilized.' },
   { id: 'ex-leg-extension', name: 'Leg Extension', muscle_group: 'Quads', equipment: 'Machine', instructions: 'Isolate quadriceps. Extend legs fully, pause at top contraction.' },
   { id: 'ex-walking-lunge', name: 'Dumbbell Walking Lunge', muscle_group: 'Quads', secondary_muscles: ['Glutes', 'Hamstrings'], equipment: 'Dumbbell', instructions: 'Step forward, drop rear knee near ground, press up through lead heel.' },
   { id: 'ex-bulgarian-split-squat', name: 'Bulgarian Split Squat', muscle_group: 'Quads', secondary_muscles: ['Glutes'], equipment: 'Dumbbell', instructions: 'Rear foot elevated on bench. Lower front thigh parallel to floor.' },
   { id: 'ex-goblet-squat', name: 'Goblet Squat', muscle_group: 'Quads', secondary_muscles: ['Core'], equipment: 'Kettlebell', instructions: 'Hold kettlebell or dumbbell at chest. Squat deep while keeping torso upright.' },
+  { id: 'ex-smith-squat', name: 'Smith Machine Squat', muscle_group: 'Quads', secondary_muscles: ['Glutes'], equipment: 'Smith Machine', instructions: 'Place feet slightly forward of bar to bias quadriceps with stable torso.' },
+  { id: 'ex-pendulum-squat', name: 'Pendulum Squat', muscle_group: 'Quads', secondary_muscles: ['Glutes'], equipment: 'Machine', instructions: 'Arc path allows deep knee flexion and high quad tension.' },
+  { id: 'ex-step-up', name: 'Dumbbell Step-Up', muscle_group: 'Quads', secondary_muscles: ['Glutes'], equipment: 'Dumbbell', instructions: 'Drive through front foot on box or bench without pushing off trail leg.' },
 
-  // Hamstrings & Glutes
+  // Hamstrings & Glutes (11)
   { id: 'ex-romanian-deadlift', name: 'Romanian Deadlift (RDL)', muscle_group: 'Hamstrings', secondary_muscles: ['Glutes', 'Back'], equipment: 'Barbell', instructions: 'Slight knee bend. Hinge at hips pushing butt back until deep hamstring stretch.' },
   { id: 'ex-db-rdl', name: 'Dumbbell Romanian Deadlift', muscle_group: 'Hamstrings', secondary_muscles: ['Glutes'], equipment: 'Dumbbell', instructions: 'Lower dumbbells close to shins with flat spine, drive hips forward.' },
   { id: 'ex-lying-leg-curl', name: 'Lying Leg Curl', muscle_group: 'Hamstrings', equipment: 'Machine', instructions: 'Curl heels towards glutes smoothly. Control the negative.' },
   { id: 'ex-seated-leg-curl', name: 'Seated Leg Curl', muscle_group: 'Hamstrings', equipment: 'Machine', instructions: 'Pad on lower calf. Flex hamstrings pulling heel beneath seat.' },
+  { id: 'ex-good-morning', name: 'Barbell Good Morning', muscle_group: 'Hamstrings', secondary_muscles: ['Glutes', 'Back'], equipment: 'Barbell', instructions: 'Bar on upper back, soft knees. Hinge forward keeping spine braced.' },
+  { id: 'ex-nordic-curl', name: 'Nordic Hamstring Curl', muscle_group: 'Hamstrings', equipment: 'Bodyweight', instructions: 'Anchor ankles, lower torso slowly with hips extended, pull back up.' },
   { id: 'ex-hip-thrust', name: 'Barbell Hip Thrust', muscle_group: 'Glutes', secondary_muscles: ['Hamstrings'], equipment: 'Barbell', instructions: 'Upper back on bench, barbell across hips. Drive hips up, lock out with glutes.' },
   { id: 'ex-cable-glute-kickback', name: 'Cable Glute Kickback', muscle_group: 'Glutes', equipment: 'Cable', instructions: 'Ankle cuff attached to low pulley. Kick leg straight back contracting glute.' },
+  { id: 'ex-sumo-deadlift', name: 'Sumo Deadlift', muscle_group: 'Glutes', secondary_muscles: ['Hamstrings', 'Quads', 'Back'], equipment: 'Barbell', instructions: 'Wide stance, toes out, hands inside knees. Drive knees out and lock hips.' },
+  { id: 'ex-hip-abduction', name: 'Seated Hip Abduction Machine', muscle_group: 'Glutes', equipment: 'Machine', instructions: 'Push pads outward focusing on glute medius squeeze.' },
+  { id: 'ex-cable-pull-through', name: 'Cable Pull-Through', muscle_group: 'Glutes', secondary_muscles: ['Hamstrings'], equipment: 'Cable', instructions: 'Face away from low pulley, rope between legs. Hinge and snap hips forward.' },
 
-  // Calves
+  // Calves (4)
   { id: 'ex-standing-calf-raise', name: 'Standing Calf Raise', muscle_group: 'Calves', equipment: 'Machine', instructions: 'Balls of feet on block. Deep stretch at bottom, press up onto toes high.' },
   { id: 'ex-seated-calf-raise', name: 'Seated Calf Raise', muscle_group: 'Calves', equipment: 'Machine', instructions: 'Focuses on the soleus muscle beneath gastrocnemius.' },
   { id: 'ex-leg-press-calf-raise', name: 'Leg Press Calf Raise', muscle_group: 'Calves', equipment: 'Machine', instructions: 'Press carriage using calf extension at end of range.' },
+  { id: 'ex-smith-calf-raise', name: 'Smith Machine Calf Raise', muscle_group: 'Calves', equipment: 'Smith Machine', instructions: 'Stand on elevated block under Smith bar. Full stretch and pause at peak.' },
 
-  // Biceps
+  // Biceps (10)
   { id: 'ex-barbell-curl', name: 'Barbell Bicep Curl', muscle_group: 'Biceps', secondary_muscles: ['Forearms'], equipment: 'Barbell', instructions: 'Shoulder-width underhand grip. Curl bar without swinging elbows.' },
   { id: 'ex-ez-bar-curl', name: 'EZ-Bar Curl', muscle_group: 'Biceps', equipment: 'Barbell', instructions: 'Angled grip reduces wrist strain while overloading biceps.' },
   { id: 'ex-db-curl', name: 'Dumbbell Alternating Curl', muscle_group: 'Biceps', equipment: 'Dumbbell', instructions: 'Supinate wrist as you curl upward for maximal bicep peak contraction.' },
@@ -69,36 +86,48 @@ export const SEED_EXERCISES: Exercise[] = [
   { id: 'ex-cable-curl', name: 'Cable Bicep Curl', muscle_group: 'Biceps', equipment: 'Cable', instructions: 'Continuous tension throughout entire range of motion.' },
   { id: 'ex-preacher-curl', name: 'Preacher Curl', muscle_group: 'Biceps', equipment: 'Machine', instructions: 'Arms anchored on preacher pad eliminates momentum.' },
   { id: 'ex-concentration-curl', name: 'Concentration Curl', muscle_group: 'Biceps', equipment: 'Dumbbell', instructions: 'Elbow braced against inner thigh. Pure bicep isolation.' },
+  { id: 'ex-bayesian-cable-curl', name: 'Bayesian Cable Curl', muscle_group: 'Biceps', equipment: 'Cable', instructions: 'Face away from low pulley so arm is behind torso for a deep stretch.' },
+  { id: 'ex-spider-curl', name: 'Spider Curl', muscle_group: 'Biceps', equipment: 'Dumbbell', instructions: 'Lie chest-down on incline bench with arms hanging straight down. Curl to peak.' },
 
-  // Triceps
+  // Triceps (9)
   { id: 'ex-tricep-rope-pushdown', name: 'Cable Tricep Rope Pushdown', muscle_group: 'Triceps', equipment: 'Cable', instructions: 'Spread rope ends at bottom lockout. Keep elbows pinned to sides.' },
   { id: 'ex-skull-crusher', name: 'Barbell Skull Crusher / Lying Extension', muscle_group: 'Triceps', equipment: 'Barbell', instructions: 'Lie on flat bench. Lower bar to forehead/top of head, extend elbows.' },
   { id: 'ex-overhead-tricep-extension', name: 'Cable Overhead Tricep Extension', muscle_group: 'Triceps', equipment: 'Cable', instructions: 'Extend long head of triceps from deep stretch overhead.' },
   { id: 'ex-close-grip-bench', name: 'Close-Grip Barbell Bench Press', muscle_group: 'Triceps', secondary_muscles: ['Chest', 'Shoulders'], equipment: 'Barbell', instructions: 'Hands spaced 12-16 inches apart. Great heavy compound for triceps.' },
   { id: 'ex-db-overhead-extension', name: 'Single Dumbbell Overhead Extension', muscle_group: 'Triceps', equipment: 'Dumbbell', instructions: 'Hold dumbbell vertically with both hands behind head, extend upwards.' },
   { id: 'ex-tricep-dip-machine', name: 'Dip Machine', muscle_group: 'Triceps', secondary_muscles: ['Chest'], equipment: 'Machine', instructions: 'Keep torso vertical to focus load on triceps.' },
+  { id: 'ex-vbar-pushdown', name: 'V-Bar Cable Pushdown', muscle_group: 'Triceps', equipment: 'Cable', instructions: 'Rigid angled bar allows heavy tricep overload with elbows locked at sides.' },
+  { id: 'ex-jm-press', name: 'JM Press', muscle_group: 'Triceps', secondary_muscles: ['Chest'], equipment: 'Barbell', instructions: 'Hybrid between close-grip bench and skull crusher for heavy tricep strength.' },
+  { id: 'ex-tricep-kickback', name: 'Cable Tricep Kickback', muscle_group: 'Triceps', equipment: 'Cable', instructions: 'Hinge forward with elbow high, extend arm straight back against cable tension.' },
 
-  // Forearms
+  // Forearms (4)
   { id: 'ex-wrist-curl', name: 'Barbell Wrist Curl', muscle_group: 'Forearms', equipment: 'Barbell', instructions: 'Forearms rested on bench. Curl wrists upward.' },
   { id: 'ex-reverse-curl', name: 'EZ-Bar Reverse Curl', muscle_group: 'Forearms', secondary_muscles: ['Biceps'], equipment: 'Barbell', instructions: 'Overhand grip builds brachioradialis.' },
-  { id: 'ex-farmers-walk', name: 'Farmer\'s Walk', muscle_group: 'Forearms', secondary_muscles: ['Core', 'Shoulders'], equipment: 'Dumbbell', instructions: 'Carry heavy weights for distance or time with tall upright posture.' },
+  { id: 'ex-farmers-walk', name: "Farmer's Walk", muscle_group: 'Forearms', secondary_muscles: ['Core', 'Shoulders'], equipment: 'Dumbbell', instructions: 'Carry heavy weights for distance or time with tall upright posture.' },
+  { id: 'ex-dead-hang', name: 'Dead Hang', muscle_group: 'Forearms', secondary_muscles: ['Back'], equipment: 'Bodyweight', instructions: 'Hang from pull-up bar with full grip to build grip endurance and shoulder health.' },
 
-  // Core
+  // Core (9)
   { id: 'ex-hanging-leg-raise', name: 'Hanging Leg Raise', muscle_group: 'Core', equipment: 'Bodyweight', instructions: 'Hang from pull-up bar. Raise straight legs or knees to parallel without swinging.' },
   { id: 'ex-cable-woodchopper', name: 'Cable Woodchopper', muscle_group: 'Core', equipment: 'Cable', instructions: 'Diagonal rotation engaging obliques and transverse abdominis.' },
   { id: 'ex-ab-wheel-rollout', name: 'Ab Wheel Rollout', muscle_group: 'Core', equipment: 'Other', instructions: 'Kneel on mat, roll wheel forward smoothly keeping spine neutral, pull back.' },
   { id: 'ex-plank', name: 'Plank', muscle_group: 'Core', equipment: 'Bodyweight', instructions: 'Forearms and toes on floor. Hold rigid line through shoulders, hips, ankles.' },
   { id: 'ex-cable-crunch', name: 'Kneeling Cable Crunch', muscle_group: 'Core', equipment: 'Cable', instructions: 'Rope behind neck. Contract abs to pull elbows toward knees.' },
   { id: 'ex-russian-twist', name: 'Russian Twist', muscle_group: 'Core', equipment: 'Bodyweight', instructions: 'V-sit position. Rotate torso side to side with control.' },
+  { id: 'ex-pallof-press', name: 'Cable Pallof Press', muscle_group: 'Core', equipment: 'Cable', instructions: 'Stand perpendicular to pulley, press handle straight out resisting rotation.' },
+  { id: 'ex-dead-bug', name: 'Dead Bug', muscle_group: 'Core', equipment: 'Bodyweight', instructions: 'Keep lower back pressed into floor while extending opposite arm and leg.' },
+  { id: 'ex-decline-crunch', name: 'Decline Bench Crunch', muscle_group: 'Core', equipment: 'Bodyweight', instructions: 'Curl torso smoothly upward on decline bench without pulling on neck.' },
 
-  // Cardio & Functional
+  // Cardio & Functional (10)
   { id: 'ex-treadmill', name: 'Treadmill Incline Walk / Run', muscle_group: 'Cardio', equipment: 'Cardio Machine', instructions: 'Zone 2 aerobic base or HIIT intervals.' },
   { id: 'ex-rowing-machine', name: 'Indoor Rowing (Ergometer)', muscle_group: 'Cardio', secondary_muscles: ['Back', 'Quads'], equipment: 'Cardio Machine', instructions: 'Drive with legs, lean back slightly, finish pull to sternum.' },
   { id: 'ex-stairmaster', name: 'StairMaster Climber', muscle_group: 'Cardio', secondary_muscles: ['Glutes', 'Calves'], equipment: 'Cardio Machine', instructions: 'Consistent pace without leaning heavily on handrails.' },
+  { id: 'ex-assault-bike', name: 'Air / Assault Bike', muscle_group: 'Cardio', secondary_muscles: ['Quads', 'Shoulders'], equipment: 'Cardio Machine', instructions: 'Full-body conditioning using arms and legs together.' },
+  { id: 'ex-stationary-bike', name: 'Stationary Cycling', muscle_group: 'Cardio', secondary_muscles: ['Quads'], equipment: 'Cardio Machine', instructions: 'Low-impact Zone 2 endurance or sprint intervals.' },
   { id: 'ex-kettlebell-swing', name: 'Kettlebell Swing', muscle_group: 'Full Body', secondary_muscles: ['Hamstrings', 'Glutes', 'Back'], equipment: 'Kettlebell', instructions: 'Explosive hip hinge driving kettlebell to chest height.' },
   { id: 'ex-clean-and-jerk', name: 'Barbell Clean & Jerk', muscle_group: 'Full Body', equipment: 'Barbell', instructions: 'Olympic lift from floor to front rack, then jerk overhead.' },
   { id: 'ex-snatch', name: 'Barbell Snatch', muscle_group: 'Full Body', equipment: 'Barbell', instructions: 'Wide grip pull from floor directly to overhead squat in one motion.' },
   { id: 'ex-burpee', name: 'Burpee', muscle_group: 'Full Body', equipment: 'Bodyweight', instructions: 'Drop into squat, kick feet back to pushup, jump back up with hands overhead.' },
+  { id: 'ex-turkish-getup', name: 'Kettlebell Turkish Get-Up', muscle_group: 'Full Body', secondary_muscles: ['Shoulders', 'Core'], equipment: 'Kettlebell', instructions: 'Rise from lying to standing while keeping kettlebell locked overhead.' },
 ];
 
 export const SEED_ROUTINES: RoutineTemplate[] = [
@@ -175,13 +204,12 @@ export function generateRealisticHistory(): { workouts: Workout[]; bodyweight: B
   const now = Date.now();
   const dayMs = 86400000;
 
-  // Generate 90 days of bodyweight (gradual lean bulk from ~173 lbs to ~177 lbs with daily fluctuation)
+  // Generate 90 days of bodyweight (gradual lean bulk from ~173 lbs to ~177 lbs with deterministic wave)
   for (let i = 90; i >= 0; i--) {
-    // Only record every 1 to 2 days
     if (i % 2 === 0 || i % 3 === 0) {
-      const date = new Date(now - i * dayMs).toISOString().split('T')[0];
-      const baseline = 173 + (1 - i / 90) * 4.2; // 173 -> 177.2
-      const fluctuation = (Math.sin(i * 0.7) * 0.8) + (Math.random() * 0.4 - 0.2);
+      const date = toLocalDateKey(now - i * dayMs);
+      const baseline = 173 + (1 - i / 90) * 4.2;
+      const fluctuation = Math.sin(i * 0.7) * 0.8 + Math.cos(i * 1.9) * 0.2;
       const weight = Math.round((baseline + fluctuation) * 10) / 10;
       bodyweight.push({
         id: `bw-${date}`,
@@ -193,43 +221,34 @@ export function generateRealisticHistory(): { workouts: Workout[]; bodyweight: B
     }
   }
 
-  // 12 weeks of training: Mon: Push, Wed: Pull, Fri: Legs, Sun: Upper
   const baseWeights = {
-    bench: 185, // 185 -> 225
-    inclineDb: 60, // 60 -> 75
-    dbShoulder: 50, // 50 -> 65
-    lateralRaise: 20, // 20 -> 30
-    tricepPushdown: 55, // 55 -> 70
-    skullCrusher: 65, // 65 -> 80
-    deadlift: 275, // 275 -> 345
-    latPulldown: 135, // 135 -> 170
-    seatedRow: 140, // 140 -> 175
-    facePull: 40, // 40 -> 55
-    ezCurl: 65, // 65 -> 80
-    hammerCurl: 30, // 30 -> 40
-    squat: 225, // 225 -> 285
-    rdl: 185, // 185 -> 245
-    legPress: 360, // 360 -> 470
-    legCurl: 110, // 110 -> 135
-    calfRaise: 140, // 140 -> 180
-    ohp: 115, // 115 -> 145
-    bbRow: 145, // 145 -> 185
+    bench: 185,
+    inclineDb: 60,
+    lateralRaise: 20,
+    tricepPushdown: 55,
+    deadlift: 275,
+    latPulldown: 135,
+    ezCurl: 65,
+    squat: 225,
+    rdl: 185,
+    calfRaise: 140,
+    ohp: 115,
+    bbRow: 145,
   };
 
   const dayOfWeekOffsets = [
-    { name: 'Push Day', routineId: 'routine-push-day', dayOffset: 1, type: 'push' },
-    { name: 'Pull Day', routineId: 'routine-pull-day', dayOffset: 3, type: 'pull' },
-    { name: 'Leg Day', routineId: 'routine-legs-day', dayOffset: 5, type: 'legs' },
-    { name: 'Upper Body Power', routineId: 'routine-upper-body', dayOffset: 0, type: 'upper' },
+    { name: 'Push Day', routineId: 'routine-push-day', dayOffset: 1, type: 'push' as const },
+    { name: 'Pull Day', routineId: 'routine-pull-day', dayOffset: 3, type: 'pull' as const },
+    { name: 'Leg Day', routineId: 'routine-legs-day', dayOffset: 5, type: 'legs' as const },
+    { name: 'Upper Body Power', routineId: 'routine-upper-body', dayOffset: 0, type: 'upper' as const },
   ];
 
   let workoutIndex = 1;
 
   for (let week = 12; week >= 0; week--) {
-    const progressFactor = (12 - week) / 12; // 0 to 1
+    const progressFactor = (12 - week) / 12;
 
     for (const split of dayOfWeekOffsets) {
-      // Skip some workouts occasionally to reflect real life (e.g. 1 out of every 8)
       if ((week === 4 && split.type === 'upper') || (week === 8 && split.type === 'pull')) {
         continue;
       }
@@ -238,20 +257,20 @@ export function generateRealisticHistory(): { workouts: Workout[]; bodyweight: B
       if (daysAgo < 0 || daysAgo > 90) continue;
 
       const dateObj = new Date(now - daysAgo * dayMs);
-      dateObj.setHours(17, 30, 0, 0); // 5:30 PM gym session
+      dateObj.setHours(17, 30, 0, 0);
       const startTime = dateObj.toISOString();
-      const durationSeconds = 3600 + Math.floor(Math.sin(daysAgo) * 600); // 50-70 mins
+      const durationSeconds = 3600 + Math.floor(Math.sin(daysAgo) * 600);
       const endTime = new Date(dateObj.getTime() + durationSeconds * 1000).toISOString();
 
-      let exercises: any[] = [];
+      let exercises: WorkoutExercise[] = [];
       let prCount = 0;
 
       if (split.type === 'push') {
         const benchWeight = Math.round((baseWeights.bench + progressFactor * 40) / 5) * 5;
         const incDbWeight = Math.round((baseWeights.inclineDb + progressFactor * 15) / 5) * 5;
         const latWeight = Math.round((baseWeights.lateralRaise + progressFactor * 10) / 2.5) * 2.5;
+        const pushdownWeight = Math.round((baseWeights.tricepPushdown + progressFactor * 15) / 5) * 5;
 
-        // Check if milestone PR week
         if (week === 1 || week === 6 || week === 10) prCount++;
 
         exercises = [
@@ -307,9 +326,9 @@ export function generateRealisticHistory(): { workouts: Workout[]; bodyweight: B
             order: 4,
             rest_seconds: 60,
             sets: [
-              { id: `s-${workoutIndex}-4-1`, set_number: 1, type: 'normal', weight: Math.round((baseWeights.tricepPushdown + progressFactor * 15) / 5) * 5, reps: 12, completed: true },
-              { id: `s-${workoutIndex}-4-2`, set_number: 2, type: 'normal', weight: Math.round((baseWeights.tricepPushdown + progressFactor * 15) / 5) * 5, reps: 12, completed: true },
-              { id: `s-${workoutIndex}-4-3`, set_number: 3, type: 'normal', weight: Math.round((baseWeights.tricepPushdown + progressFactor * 15) / 5) * 5, reps: 10, completed: true },
+              { id: `s-${workoutIndex}-4-1`, set_number: 1, type: 'normal', weight: pushdownWeight, reps: 12, completed: true },
+              { id: `s-${workoutIndex}-4-2`, set_number: 2, type: 'normal', weight: pushdownWeight, reps: 12, completed: true },
+              { id: `s-${workoutIndex}-4-3`, set_number: 3, type: 'normal', weight: pushdownWeight, reps: 10, completed: true },
             ],
           },
         ];
@@ -367,6 +386,7 @@ export function generateRealisticHistory(): { workouts: Workout[]; bodyweight: B
       } else if (split.type === 'legs') {
         const squatWeight = Math.round((baseWeights.squat + progressFactor * 60) / 10) * 10;
         const rdlWeight = Math.round((baseWeights.rdl + progressFactor * 60) / 10) * 10;
+        const calfWeight = Math.round((baseWeights.calfRaise + progressFactor * 40) / 10) * 10;
 
         if (week === 3 || week === 9) prCount++;
 
@@ -409,14 +429,13 @@ export function generateRealisticHistory(): { workouts: Workout[]; bodyweight: B
             order: 3,
             rest_seconds: 60,
             sets: [
-              { id: `s-${workoutIndex}-3-1`, set_number: 1, type: 'normal', weight: Math.round((baseWeights.calfRaise + progressFactor * 40) / 10) * 10, reps: 15, completed: true },
-              { id: `s-${workoutIndex}-3-2`, set_number: 2, type: 'normal', weight: Math.round((baseWeights.calfRaise + progressFactor * 40) / 10) * 10, reps: 14, completed: true },
-              { id: `s-${workoutIndex}-3-3`, set_number: 3, type: 'normal', weight: Math.round((baseWeights.calfRaise + progressFactor * 40) / 10) * 10, reps: 12, completed: true },
+              { id: `s-${workoutIndex}-3-1`, set_number: 1, type: 'normal', weight: calfWeight, reps: 15, completed: true },
+              { id: `s-${workoutIndex}-3-2`, set_number: 2, type: 'normal', weight: calfWeight, reps: 14, completed: true },
+              { id: `s-${workoutIndex}-3-3`, set_number: 3, type: 'normal', weight: calfWeight, reps: 12, completed: true },
             ],
           },
         ];
       } else {
-        // Upper body power
         const benchWeight = Math.round((baseWeights.bench + progressFactor * 40) / 5) * 5;
         const rowWeight = Math.round((baseWeights.bbRow + progressFactor * 40) / 5) * 5;
         const ohpWeight = Math.round((baseWeights.ohp + progressFactor * 30) / 5) * 5;
@@ -467,20 +486,7 @@ export function generateRealisticHistory(): { workouts: Workout[]; bodyweight: B
         ];
       }
 
-      // Calculate totals
-      let totalVolume = 0;
-      let totalSets = 0;
-      let totalReps = 0;
-
-      for (const ex of exercises) {
-        for (const set of ex.sets) {
-          if (set.completed) {
-            totalSets++;
-            totalReps += set.reps;
-            totalVolume += set.weight * set.reps;
-          }
-        }
-      }
+      const stats = calculateWorkoutStats(exercises);
 
       workouts.push({
         id: `workout-${workoutIndex}`,
@@ -491,9 +497,9 @@ export function generateRealisticHistory(): { workouts: Workout[]; bodyweight: B
         duration_seconds: durationSeconds,
         notes: week % 4 === 0 ? 'Felt strong, good bar speed throughout.' : undefined,
         exercises,
-        total_volume: totalVolume,
-        total_sets: totalSets,
-        total_reps: totalReps,
+        total_volume: stats.total_volume,
+        total_sets: stats.total_sets,
+        total_reps: stats.total_reps,
         pr_count: prCount,
         created_at: startTime,
         updated_at: endTime,

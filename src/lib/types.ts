@@ -25,6 +25,15 @@ export type Equipment =
   | 'Cardio Machine'
   | 'Other';
 
+export type RoutineCategory =
+  | 'Push'
+  | 'Pull'
+  | 'Legs'
+  | 'Upper'
+  | 'Lower'
+  | 'Full Body'
+  | 'Custom';
+
 export interface Exercise {
   id: string;
   name: string;
@@ -81,6 +90,10 @@ export interface Workout {
   synced?: boolean;
 }
 
+export interface ActiveWorkoutRecord extends Workout {
+  workout_id?: string;
+}
+
 export interface RoutineExerciseTemplate {
   exercise_id: string;
   exercise_name: string;
@@ -97,7 +110,7 @@ export interface RoutineTemplate {
   id: string;
   name: string;
   description?: string;
-  category?: 'Push' | 'Pull' | 'Legs' | 'Upper' | 'Lower' | 'Full Body' | 'Custom';
+  category?: RoutineCategory;
   exercises: RoutineExerciseTemplate[];
   created_at: string;
   updated_at: string;
@@ -105,7 +118,7 @@ export interface RoutineTemplate {
 
 export interface BodyweightEntry {
   id: string;
-  date: string; // YYYY-MM-DD
+  date: string; // YYYY-MM-DD (local date)
   weight: number;
   notes?: string;
   created_at: string;
@@ -125,6 +138,7 @@ export type SyncAction =
   | 'UPSERT_ROUTINE'
   | 'DELETE_ROUTINE'
   | 'UPSERT_EXERCISE'
+  | 'DELETE_EXERCISE'
   | 'UPSERT_BODYWEIGHT'
   | 'DELETE_BODYWEIGHT';
 
@@ -132,9 +146,10 @@ export interface SyncQueueItem {
   id: string;
   action: SyncAction;
   entity_id: string;
-  payload: any;
+  payload: Record<string, unknown>;
   timestamp: string;
   retries: number;
+  last_error?: string;
 }
 
 export interface UserPreferences {
@@ -145,4 +160,14 @@ export interface UserPreferences {
   haptic_enabled: boolean;
   theme: 'dark';
   weekly_goal_workouts: number;
+}
+
+export interface BackupDataBundle {
+  version: number;
+  exported_at: string;
+  preferences: UserPreferences;
+  exercises: Exercise[];
+  routines: RoutineTemplate[];
+  workouts: Workout[];
+  bodyweight: BodyweightEntry[];
 }

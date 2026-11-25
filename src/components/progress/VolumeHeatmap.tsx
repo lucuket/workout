@@ -2,6 +2,7 @@
 
 import React, { useMemo } from 'react';
 import { Workout } from '@/lib/types';
+import { toLocalDateKey } from '@/lib/constants';
 
 interface VolumeHeatmapProps {
   workouts: Workout[];
@@ -9,16 +10,14 @@ interface VolumeHeatmapProps {
 }
 
 export default function VolumeHeatmap({ workouts, weightUnit = 'lbs' }: VolumeHeatmapProps) {
-  // Generate the last 16 weeks (approx 112 days)
   const heatmapData = useMemo(() => {
     const today = new Date();
     const dayMs = 86400000;
     const totalDays = 112; // 16 weeks * 7 days
 
-    // Map workouts by date (YYYY-MM-DD)
     const workoutMap: Record<string, { volume: number; name: string; count: number }> = {};
     for (const w of workouts) {
-      const date = w.start_time.split('T')[0];
+      const date = toLocalDateKey(w.start_time);
       if (!workoutMap[date]) {
         workoutMap[date] = { volume: w.total_volume, name: w.name, count: 1 };
       } else {
@@ -27,7 +26,6 @@ export default function VolumeHeatmap({ workouts, weightUnit = 'lbs' }: VolumeHe
       }
     }
 
-    // Find max daily volume for color scale
     let maxVolume = 1;
     for (const key in workoutMap) {
       if (workoutMap[key].volume > maxVolume) {
@@ -40,12 +38,11 @@ export default function VolumeHeatmap({ workouts, weightUnit = 'lbs' }: VolumeHe
       volume: number;
       count: number;
       name?: string;
-      level: number; // 0 to 4
+      level: number;
     }[] = [];
 
     for (let i = totalDays - 1; i >= 0; i--) {
-      const d = new Date(today.getTime() - i * dayMs);
-      const dateStr = d.toISOString().split('T')[0];
+      const dateStr = toLocalDateKey(today.getTime() - i * dayMs);
       const entry = workoutMap[dateStr];
 
       if (entry && entry.volume > 0) {
@@ -75,7 +72,6 @@ export default function VolumeHeatmap({ workouts, weightUnit = 'lbs' }: VolumeHe
     return { days, maxVolume };
   }, [workouts]);
 
-  // Group into columns of 7 days
   const weeks = useMemo(() => {
     const cols = [];
     for (let i = 0; i < heatmapData.days.length; i += 7) {

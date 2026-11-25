@@ -1,39 +1,15 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { Search, Plus, Dumbbell, Filter, Sparkles, X } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Search, Plus, Dumbbell, X } from 'lucide-react';
 import { Exercise, MuscleGroup, Equipment } from '@/lib/types';
 import { getAllExercises, getUserPreferences } from '@/lib/db';
+import { EQUIPMENT_OPTIONS, MUSCLE_GROUPS } from '@/lib/constants';
 import ExerciseDetailModal from './ExerciseDetailModal';
 import AddCustomExerciseModal from './AddCustomExerciseModal';
 
-const MUSCLE_FILTERS: (MuscleGroup | 'All')[] = [
-  'All',
-  'Chest',
-  'Back',
-  'Shoulders',
-  'Quads',
-  'Hamstrings',
-  'Glutes',
-  'Calves',
-  'Biceps',
-  'Triceps',
-  'Forearms',
-  'Core',
-  'Cardio',
-  'Full Body',
-];
-
-const EQUIPMENT_FILTERS: (Equipment | 'All')[] = [
-  'All',
-  'Barbell',
-  'Dumbbell',
-  'Cable',
-  'Machine',
-  'Bodyweight',
-  'Smith Machine',
-  'Kettlebell',
-];
+const MUSCLE_FILTERS: (MuscleGroup | 'All')[] = ['All', ...MUSCLE_GROUPS];
+const EQUIPMENT_FILTERS: (Equipment | 'All')[] = ['All', ...EQUIPMENT_OPTIONS];
 
 export default function ExerciseLibrary() {
   const [exercises, setExercises] = useState<Exercise[]>([]);
@@ -47,25 +23,28 @@ export default function ExerciseLibrary() {
 
   useEffect(() => {
     const load = async () => {
-      const data = await getAllExercises();
+      const [data, prefs] = await Promise.all([getAllExercises(), getUserPreferences()]);
       setExercises(data);
-      const prefs = await getUserPreferences();
       setWeightUnit(prefs.weight_unit);
     };
-    load();
+    void load();
   }, []);
 
-  const filteredExercises = exercises.filter((ex) => {
-    const matchesSearch =
-      ex.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      ex.muscle_group.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      ex.equipment.toLowerCase().includes(searchQuery.toLowerCase());
+  const filteredExercises = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return exercises.filter((ex) => {
+      const matchesSearch =
+        !q ||
+        ex.name.toLowerCase().includes(q) ||
+        ex.muscle_group.toLowerCase().includes(q) ||
+        ex.equipment.toLowerCase().includes(q);
 
-    const matchesMuscle = selectedMuscle === 'All' || ex.muscle_group === selectedMuscle;
-    const matchesEquipment = selectedEquipment === 'All' || ex.equipment === selectedEquipment;
+      const matchesMuscle = selectedMuscle === 'All' || ex.muscle_group === selectedMuscle;
+      const matchesEquipment = selectedEquipment === 'All' || ex.equipment === selectedEquipment;
 
-    return matchesSearch && matchesMuscle && matchesEquipment;
-  });
+      return matchesSearch && matchesMuscle && matchesEquipment;
+    });
+  }, [exercises, searchQuery, selectedMuscle, selectedEquipment]);
 
   const handleExerciseClick = (ex: Exercise) => {
     setSelectedExercise(ex);
@@ -78,15 +57,20 @@ export default function ExerciseLibrary() {
     setIsDetailOpen(true);
   };
 
+  const handleExerciseDeleted = (id: string) => {
+    setExercises((prev) => prev.filter((ex) => ex.id !== id));
+    setSelectedExercise(null);
+  };
+
   return (
     <div className="space-y-4">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-black text-zinc-100 tracking-tight">Exercise Library</h1>
-          <p className="text-xs text-zinc-400">100+ exercises & personal records</p>
+          <p className="text-xs text-zinc-400">{exercises.length} exercises & personal records</p>
         </div>
         <button
+          type="button"
           onClick={() => setIsAddOpen(true)}
           className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold text-xs shadow-md shadow-emerald-500/20 active-press"
         >
@@ -95,7 +79,6 @@ export default function ExerciseLibrary() {
         </button>
       </div>
 
-      {/* Search Bar */}
       <div className="relative">
         <Search className="w-4 h-4 text-zinc-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
         <input
@@ -107,19 +90,21 @@ export default function ExerciseLibrary() {
         />
         {searchQuery && (
           <button
+            type="button"
             onClick={() => setSearchQuery('')}
             className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1"
+            aria-label="Clear search"
           >
             <X className="w-3.5 h-3.5" />
           </button>
         )}
       </div>
 
-      {/* Muscle Filter Pills */}
       <div className="overflow-x-auto -mx-4 px-4 scrollbar-none flex gap-1.5 pb-1">
         {MUSCLE_FILTERS.map((muscle) => (
           <button
             key={muscle}
+            type="button"
             onClick={() => setSelectedMuscle(muscle)}
             className={`whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-semibold transition-colors active-press ${
               selectedMuscle === muscle
@@ -132,11 +117,11 @@ export default function ExerciseLibrary() {
         ))}
       </div>
 
-      {/* Equipment Filter Pills */}
       <div className="overflow-x-auto -mx-4 px-4 scrollbar-none flex gap-1.5 pb-1">
         {EQUIPMENT_FILTERS.map((eq) => (
           <button
             key={eq}
+            type="button"
             onClick={() => setSelectedEquipment(eq)}
             className={`whitespace-nowrap px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors active-press ${
               selectedEquipment === eq
@@ -149,17 +134,17 @@ export default function ExerciseLibrary() {
         ))}
       </div>
 
-      {/* Exercise Count & List */}
       <div className="flex items-center justify-between text-xs text-zinc-400 px-1 pt-1">
         <span>Showing {filteredExercises.length} exercises</span>
       </div>
 
       <div className="space-y-2">
         {filteredExercises.map((ex) => (
-          <div
+          <button
             key={ex.id}
+            type="button"
             onClick={() => handleExerciseClick(ex)}
-            className="p-3.5 rounded-2xl bg-zinc-900/90 border border-zinc-800/80 hover:border-zinc-700 flex items-center justify-between cursor-pointer active-press transition-colors"
+            className="w-full text-left p-3.5 rounded-2xl bg-zinc-900/90 border border-zinc-800/80 hover:border-zinc-700 flex items-center justify-between active-press transition-colors"
           >
             <div className="space-y-1">
               <div className="flex items-center gap-2">
@@ -177,22 +162,21 @@ export default function ExerciseLibrary() {
               </div>
             </div>
 
-            <div className="w-8 h-8 rounded-xl bg-zinc-800/70 flex items-center justify-center text-zinc-400">
+            <div className="w-8 h-8 rounded-xl bg-zinc-800/70 flex items-center justify-center text-zinc-400 flex-shrink-0">
               <Dumbbell className="w-4 h-4" />
             </div>
-          </div>
+          </button>
         ))}
       </div>
 
-      {/* Detail Modal */}
       <ExerciseDetailModal
         exercise={selectedExercise}
         isOpen={isDetailOpen}
         onClose={() => setIsDetailOpen(false)}
+        onDeleted={handleExerciseDeleted}
         weightUnit={weightUnit}
       />
 
-      {/* Add Custom Exercise Modal */}
       <AddCustomExerciseModal
         isOpen={isAddOpen}
         onClose={() => setIsAddOpen(false)}

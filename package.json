@@ -6,7 +6,9 @@
     "dev": "next dev --turbo",
     "build": "next build --turbo",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "tsc --project tsconfig.test.json && node --test .test-dist/tests/workout-core.test.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.1",

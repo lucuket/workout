@@ -1,8 +1,10 @@
 'use client';
 
-import React, { useRef, useState } from 'react';
-import { Share2, Download, Trophy, Dumbbell, Flame, Clock, Sparkles } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { Share2, Download, Sparkles } from 'lucide-react';
 import { Workout } from '@/lib/types';
+import { toLocalDateKey } from '@/lib/constants';
+import { calculateWeeklyMetrics } from '@/lib/workout-utils';
 
 interface WeeklyShareCardProps {
   workouts: Workout[];
@@ -16,23 +18,22 @@ export default function WeeklyShareCard({
   userGoal = 4,
 }: WeeklyShareCardProps) {
   const [isGenerating, setIsGenerating] = useState(false);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  // Filter workouts in the current week (last 7 days)
-  const now = Date.now();
-  const weekMs = 7 * 86400000;
-  const thisWeekWorkouts = workouts.filter((w) => {
-    const t = new Date(w.start_time).getTime();
-    return now - t <= weekMs;
-  });
+  const { thisWeekWorkouts, totalVolume, totalMinutes, totalSets } = useMemo(() => {
+    const metrics = calculateWeeklyMetrics(workouts);
+    const vol = metrics.thisWeekWorkouts.reduce((sum, w) => sum + w.total_volume, 0);
+    const secs = metrics.thisWeekWorkouts.reduce((sum, w) => sum + w.duration_seconds, 0);
+    const sets = metrics.thisWeekWorkouts.reduce((sum, w) => sum + w.total_sets, 0);
+    return {
+      thisWeekWorkouts: metrics.thisWeekWorkouts,
+      totalVolume: vol,
+      totalMinutes: Math.round(secs / 60),
+      totalSets: sets,
+    };
+  }, [workouts]);
 
-  const totalVolume = thisWeekWorkouts.reduce((sum, w) => sum + w.total_volume, 0);
-  const totalSeconds = thisWeekWorkouts.reduce((sum, w) => sum + w.duration_seconds, 0);
-  const totalMinutes = Math.round(totalSeconds / 60);
-  const totalSets = thisWeekWorkouts.reduce((sum, w) => sum + w.total_sets, 0);
   const workoutsCount = thisWeekWorkouts.length;
 
-  // Render high-res 1200x630 (or 800x800 square) image to Canvas
   const generateCanvasImage = async (): Promise<string> => {
     const canvas = document.createElement('canvas');
     const width = 800;
@@ -42,7 +43,6 @@ export default function WeeklyShareCard({
     const ctx = canvas.getContext('2d');
     if (!ctx) return '';
 
-    // 1. Background Gradient
     const bgGradient = ctx.createLinearGradient(0, 0, width, height);
     bgGradient.addColorStop(0, '#09090b');
     bgGradient.addColorStop(0.5, '#121218');
@@ -50,7 +50,6 @@ export default function WeeklyShareCard({
     ctx.fillStyle = bgGradient;
     ctx.fillRect(0, 0, width, height);
 
-    // Glowing Accent Orbs
     const glow1 = ctx.createRadialGradient(700, 100, 10, 700, 100, 400);
     glow1.addColorStop(0, 'rgba(16, 185, 129, 0.2)');
     glow1.addColorStop(1, 'rgba(16, 185, 129, 0)');
@@ -63,12 +62,10 @@ export default function WeeklyShareCard({
     ctx.fillStyle = glow2;
     ctx.fillRect(0, 0, width, height);
 
-    // Card Outer Border
     ctx.strokeStyle = '#27272a';
     ctx.lineWidth = 4;
     ctx.strokeRect(30, 30, width - 60, height - 60);
 
-    // Header: Brand & Label
     ctx.font = 'bold 30px system-ui, sans-serif';
     ctx.fillStyle = '#ffffff';
     ctx.fillText('APEX', 70, 100);
@@ -79,7 +76,6 @@ export default function WeeklyShareCard({
     ctx.fillStyle = '#71717a';
     ctx.fillText('WEEKLY RECAP', 70, 130);
 
-    // Title / Greeting
     ctx.font = '900 48px system-ui, sans-serif';
     ctx.fillStyle = '#f4f4f5';
     ctx.fillText('WEEKLY SUMMARY', 70, 200);
@@ -88,7 +84,6 @@ export default function WeeklyShareCard({
     ctx.fillStyle = '#a1a1aa';
     ctx.fillText('Consistency is the only secret that works.', 70, 240);
 
-    // Metric 1: Total Volume (Big highlight card)
     ctx.fillStyle = '#18181b';
     ctx.fillRect(70, 280, 660, 150);
     ctx.strokeStyle = '#3f3f46';
@@ -97,14 +92,12 @@ export default function WeeklyShareCard({
 
     ctx.font = 'bold 16px system-ui, sans-serif';
     ctx.fillStyle = '#10b981';
-    ctx.fillText('⚡ TOTAL TONNAGE LIFTED', 100, 320);
+    ctx.fillText('TOTAL TONNAGE LIFTED', 100, 320);
 
     ctx.font = '900 64px system-ui, sans-serif';
     ctx.fillStyle = '#ffffff';
     ctx.fillText(`${totalVolume.toLocaleString()} ${weightUnit}`, 100, 395);
 
-    // Metric Cards Grid: Workouts, Minutes, Sets
-    // Box 1: Workouts
     ctx.fillStyle = '#18181b';
     ctx.fillRect(70, 460, 200, 170);
     ctx.strokeRect(70, 460, 200, 170);
@@ -118,7 +111,6 @@ export default function WeeklyShareCard({
     ctx.fillStyle = '#71717a';
     ctx.fillText(`Goal: ${userGoal}/wk`, 95, 605);
 
-    // Box 2: Time
     ctx.fillStyle = '#18181b';
     ctx.fillRect(300, 460, 200, 170);
     ctx.strokeRect(300, 460, 200, 170);
@@ -132,7 +124,6 @@ export default function WeeklyShareCard({
     ctx.fillStyle = '#71717a';
     ctx.fillText('Minutes in gym', 325, 605);
 
-    // Box 3: Total Sets
     ctx.fillStyle = '#18181b';
     ctx.fillRect(530, 460, 200, 170);
     ctx.strokeRect(530, 460, 200, 170);
@@ -146,22 +137,25 @@ export default function WeeklyShareCard({
     ctx.fillStyle = '#71717a';
     ctx.fillText('Completed sets', 555, 605);
 
-    // Footer Watermark
     ctx.font = 'bold 16px monospace';
     ctx.fillStyle = '#52525b';
-    ctx.fillText('Tracked with ApexLift PWA • Stay Hungry', 70, 720);
+    ctx.fillText('Tracked with ApexLift PWA', 70, 720);
 
     return canvas.toDataURL('image/png');
+  };
+
+  const triggerDownload = (dataUrl: string) => {
+    const link = document.createElement('a');
+    link.download = `ApexLift-Weekly-Summary-${toLocalDateKey(new Date())}.png`;
+    link.href = dataUrl;
+    link.click();
   };
 
   const handleDownloadImage = async () => {
     setIsGenerating(true);
     try {
       const dataUrl = await generateCanvasImage();
-      const link = document.createElement('a');
-      link.download = `ApexLift-Weekly-Summary-${new Date().toISOString().split('T')[0]}.png`;
-      link.href = dataUrl;
-      link.click();
+      if (dataUrl) triggerDownload(dataUrl);
     } catch (err) {
       console.error('Image export failed:', err);
     } finally {
@@ -173,6 +167,7 @@ export default function WeeklyShareCard({
     setIsGenerating(true);
     try {
       const dataUrl = await generateCanvasImage();
+      if (!dataUrl) return;
       const res = await fetch(dataUrl);
       const blob = await res.blob();
       const file = new File([blob], 'weekly-summary.png', { type: 'image/png' });
@@ -181,15 +176,17 @@ export default function WeeklyShareCard({
         await navigator.share({
           files: [file],
           title: 'My Weekly Gym Summary - ApexLift',
-          text: `Crushed ${totalVolume.toLocaleString()} ${weightUnit} across ${workoutsCount} workouts this week! 💪`,
+          text: `Crushed ${totalVolume.toLocaleString()} ${weightUnit} across ${workoutsCount} workouts this week!`,
         });
       } else {
-        // Fallback to downloading image
-        handleDownloadImage();
+        triggerDownload(dataUrl);
       }
     } catch (err) {
-      // If user cancelled share, ignore
-      handleDownloadImage();
+      // Do not force-download when the user intentionally cancels the native share sheet
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        return;
+      }
+      console.error('Share failed:', err);
     } finally {
       setIsGenerating(false);
     }
@@ -197,7 +194,6 @@ export default function WeeklyShareCard({
 
   return (
     <div className="bg-gradient-to-b from-zinc-900 via-zinc-900 to-zinc-950 border border-zinc-800 rounded-3xl p-5 shadow-2xl space-y-4">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400">
@@ -215,14 +211,17 @@ export default function WeeklyShareCard({
 
         <div className="flex items-center gap-1.5">
           <button
+            type="button"
             onClick={handleDownloadImage}
             disabled={isGenerating}
             className="p-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 active-press border border-zinc-700/60"
             title="Download PNG"
+            aria-label="Download weekly summary PNG"
           >
             <Download className="w-4 h-4" />
           </button>
           <button
+            type="button"
             onClick={handleShare}
             disabled={isGenerating}
             className="flex items-center gap-1 px-3 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold text-xs shadow-md shadow-emerald-500/20 active-press"
@@ -233,9 +232,7 @@ export default function WeeklyShareCard({
         </div>
       </div>
 
-      {/* Visual Preview Card */}
       <div className="relative overflow-hidden rounded-2xl bg-zinc-950 p-4 border border-zinc-800 space-y-3">
-        {/* Glow ambient */}
         <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-2xl pointer-events-none" />
 
         <div className="flex items-center justify-between text-xs text-zinc-400">

@@ -8,12 +8,10 @@ import {
   Trash2,
   Check,
   Scale,
-  Timer,
-  ChevronDown,
   X,
-  MoreVertical,
-  Dumbbell,
-  AlertCircle,
+  ArrowUp,
+  ArrowDown,
+  StickyNote,
 } from 'lucide-react';
 import {
   Workout,
@@ -30,12 +28,18 @@ import {
   getAllExercises,
   getLastPerformanceForExercise,
   calculatePersonalRecords,
-  calculate1RM,
   getUserPreferences,
 } from '@/lib/db';
+import { DEFAULT_PREFERENCES, generateId } from '@/lib/constants';
+import {
+  calculateWorkoutStats,
+  countNewPRs,
+  formatElapsedSeconds,
+} from '@/lib/workout-utils';
 import RestTimer from './RestTimer';
 import PlateCalculatorModal from './PlateCalculatorModal';
 import WorkoutCompleteModal from './WorkoutCompleteModal';
+import ExercisePickerModal from '@/components/shared/ExercisePickerModal';
 import { triggerHaptic } from '@/lib/audio';
 
 interface ActiveWorkoutViewProps {
@@ -50,19 +54,15 @@ export default function ActiveWorkoutView({
   onCancel,
 }: ActiveWorkoutViewProps) {
   const [workout, setWorkout] = useState<Workout | null>(initialWorkout || null);
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [elapsedSeconds, setElapsedSeconds] = useState(initialWorkout?.duration_seconds || 0);
   const [isTimerPaused, setIsTimerPaused] = useState(false);
-  const [prefs, setPrefs] = useState<UserPreferences>({
-    weight_unit: 'lbs',
-    barbell_weight: 45,
-    default_rest_seconds: 90,
-    sound_enabled: true,
-    haptic_enabled: true,
-    theme: 'dark',
-    weekly_goal_workouts: 4,
-  });
+  const [pausedOffsetMs, setPausedOffsetMs] = useState(0);
+  const pauseStartedAtRef = useRef<number | null>(null);
+  const [showNotes, setShowNotes] = useState(Boolean(initialWorkout?.notes));
+  const [prefs, setPrefs] = useState<UserPreferences>(DEFAULT_PREFERENCES);
 
-  // Rest Timer State
+  // Rest Timer State (timestamp-based to stay accurate across mobile screen lock)
+  const [restEndTimestamp, setRestEndTimestamp] = useState<number | null>(null);
   const [restSecondsRemaining, setRestSecondsRemaining] = useState<number>(0);
   const [restTotalSeconds, setRestTotalSeconds] = useState<number>(0);
   const [restExerciseName, setRestExerciseName] = useState<string>('');
@@ -75,66 +75,88 @@ export default function ActiveWorkoutView({
   // Add Exercise Library Modal State
   const [isAddExerciseModalOpen, setIsAddExerciseModalOpen] = useState(false);
   const [allExercises, setAllExercises] = useState<Exercise[]>([]);
-  const [exerciseSearch, setExerciseSearch] = useState('');
+
+  // Swipe gesture state for set rows
+  const [swipingSetId, setSwipingSetId] = useState<string | null>(null);
+  const [swipeOffsetX, setSwipeOffsetX] = useState<number>(0);
+  const touchStartXRef = useRef<number | null>(null);
+  const touchStartYRef = useRef<number | null>(null);
 
   // Finished Workout Summary Modal
   const [completedWorkout, setCompletedWorkout] = useState<Workout | null>(null);
   const [isCompleteModalOpen, setIsCompleteModalOpen] = useState(false);
 
-  // Initialize preferences & exercises
+  // Load preferences & exercise library
   useEffect(() => {
     const load = async () => {
-      const p = await getUserPreferences();
+      const [p, ex] = await Promise.all([getUserPreferences(), getAllExercises()]);
       setPrefs(p);
-      const ex = await getAllExercises();
       setAllExercises(ex);
     };
-    load();
+    void load();
   }, []);
 
   // Elapsed workout timer
   useEffect(() => {
-    if (!workout || isTimerPaused) return;
+    if (!workout || isTimerPaused || isCompleteModalOpen) return;
 
     const startTimestamp = new Date(workout.start_time).getTime();
     const updateElapsed = () => {
-      const now = Date.now();
-      setElapsedSeconds(Math.max(0, Math.floor((now - startTimestamp) / 1000)));
+      const elapsedMs = Date.now() - startTimestamp - pausedOffsetMs;
+      setElapsedSeconds(Math.max(0, Math.floor(elapsedMs / 1000)));
     };
 
     updateElapsed();
-    const interval = setInterval(updateElapsed, 1000);
-    return () => clearInterval(interval);
-  }, [workout?.start_time, isTimerPaused]);
+    const interval = window.setInterval(updateElapsed, 1000);
+    return () => window.clearInterval(interval);
+  }, [workout, isTimerPaused, pausedOffsetMs, isCompleteModalOpen]);
 
-  // Rest timer countdown
+  // Drift-free rest timer countdown using wall-clock timestamp
   useEffect(() => {
-    if (!isResting || restSecondsRemaining <= 0) return;
+    if (!isResting || restEndTimestamp === null) return;
 
-    const timer = setInterval(() => {
-      setRestSecondsRemaining((prev) => {
-        if (prev <= 1) {
-          return 0;
-        }
-        return prev - 1;
+    const tick = () => {
+      const rem = Math.max(0, Math.ceil((restEndTimestamp - Date.now()) / 1000));
+      setRestSecondsRemaining(rem);
+    };
+
+    tick();
+    const interval = window.setInterval(tick, 250);
+    return () => window.clearInterval(interval);
+  }, [isResting, restEndTimestamp]);
+
+  // Persist active workout only when workout structure/values change (not every second!)
+  const elapsedRef = useRef(elapsedSeconds);
+  elapsedRef.current = elapsedSeconds;
+
+  useEffect(() => {
+    if (workout && !isCompleteModalOpen) {
+      void saveActiveWorkout({
+        ...workout,
+        duration_seconds: elapsedRef.current,
+        updated_at: new Date().toISOString(),
       });
-    }, 1000);
-
-    return () => clearInterval(timer);
-  }, [isResting, restSecondsRemaining]);
-
-  // Persist active workout on every change
-  useEffect(() => {
-    if (workout) {
-      saveActiveWorkout({ ...workout, duration_seconds: elapsedSeconds });
     }
-  }, [workout, elapsedSeconds]);
+  }, [workout, isCompleteModalOpen]);
 
   if (!workout) {
     return null;
   }
 
-  // Set updates
+  const handleTogglePauseTimer = () => {
+    if (isTimerPaused) {
+      if (pauseStartedAtRef.current !== null) {
+        setPausedOffsetMs((prev) => prev + (Date.now() - pauseStartedAtRef.current!));
+        pauseStartedAtRef.current = null;
+      }
+      setIsTimerPaused(false);
+    } else {
+      pauseStartedAtRef.current = Date.now();
+      setIsTimerPaused(true);
+    }
+  };
+
+  // Set updates (immutable)
   const handleUpdateSet = (
     exerciseIndex: number,
     setIndex: number,
@@ -142,20 +164,23 @@ export default function ActiveWorkoutView({
   ) => {
     setWorkout((prev) => {
       if (!prev) return null;
-      const updatedExercises = [...prev.exercises];
-      const targetExercise = { ...updatedExercises[exerciseIndex] };
-      const updatedSets = [...targetExercise.sets];
-      updatedSets[setIndex] = { ...updatedSets[setIndex], ...fields };
-      targetExercise.sets = updatedSets;
-      updatedExercises[exerciseIndex] = targetExercise;
+      const updatedExercises = prev.exercises.map((ex, idx) => {
+        if (idx !== exerciseIndex) return ex;
+        return {
+          ...ex,
+          sets: ex.sets.map((s, sIdx) => (sIdx === setIndex ? { ...s, ...fields } : s)),
+        };
+      });
       return { ...prev, exercises: updatedExercises };
     });
   };
 
-  // Toggle set completion (swipe or tap check)
+  // Toggle set completion (tap or swipe right)
   const handleToggleCompleteSet = (exerciseIndex: number, setIndex: number) => {
-    if (!workout) return;
-    const targetSet = workout.exercises[exerciseIndex].sets[setIndex];
+    const exercise = workout.exercises[exerciseIndex];
+    const targetSet = exercise?.sets[setIndex];
+    if (!exercise || !targetSet) return;
+
     const newCompletedState = !targetSet.completed;
 
     if (prefs.haptic_enabled) {
@@ -167,65 +192,86 @@ export default function ActiveWorkoutView({
       completed_at: newCompletedState ? new Date().toISOString() : undefined,
     });
 
-    // Start rest timer automatically when set completed
     if (newCompletedState) {
-      const exercise = workout.exercises[exerciseIndex];
       const restSeconds = exercise.rest_seconds || prefs.default_rest_seconds;
       setRestTotalSeconds(restSeconds);
       setRestSecondsRemaining(restSeconds);
+      setRestEndTimestamp(Date.now() + restSeconds * 1000);
       setRestExerciseName(exercise.exercise_name);
       setIsResting(true);
     }
   };
 
+  const handleAdjustRestTime = (delta: number) => {
+    setRestEndTimestamp((prevEnd) => {
+      const base = Math.max(Date.now(), prevEnd ?? Date.now());
+      const nextEnd = Math.max(Date.now(), base + delta * 1000);
+      const nextRem = Math.max(0, Math.ceil((nextEnd - Date.now()) / 1000));
+      setRestSecondsRemaining(nextRem);
+      setRestTotalSeconds((prevTotal) => Math.max(prevTotal, nextRem));
+      return nextEnd;
+    });
+  };
+
   // Add a new set to an exercise
   const handleAddSet = (exerciseIndex: number) => {
-    if (!workout) return;
-    const exercise = workout.exercises[exerciseIndex];
-    const lastSet = exercise.sets[exercise.sets.length - 1];
-
-    const newSet: WorkoutSet = {
-      id: `s-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-      set_number: exercise.sets.length + 1,
-      type: 'normal',
-      weight: lastSet ? lastSet.weight : 0,
-      reps: lastSet ? lastSet.reps : 10,
-      completed: false,
-    };
-
     setWorkout((prev) => {
       if (!prev) return null;
-      const updated = [...prev.exercises];
-      updated[exerciseIndex] = {
-        ...updated[exerciseIndex],
-        sets: [...updated[exerciseIndex].sets, newSet],
-      };
+      const updated = prev.exercises.map((ex, idx) => {
+        if (idx !== exerciseIndex) return ex;
+        const lastSet = ex.sets[ex.sets.length - 1];
+        const newSet: WorkoutSet = {
+          id: generateId('set'),
+          set_number: ex.sets.length + 1,
+          type: 'normal',
+          weight: lastSet ? lastSet.weight : 0,
+          reps: lastSet ? lastSet.reps : 10,
+          completed: false,
+        };
+        return { ...ex, sets: [...ex.sets, newSet] };
+      });
       return { ...prev, exercises: updated };
     });
   };
 
-  // Delete a set
+  // Delete a set (immutable)
   const handleDeleteSet = (exerciseIndex: number, setIndex: number) => {
     setWorkout((prev) => {
       if (!prev) return null;
-      const updated = [...prev.exercises];
-      const ex = updated[exerciseIndex];
-      const filteredSets = ex.sets.filter((_, idx) => idx !== setIndex);
-      // Re-index set numbers
-      ex.sets = filteredSets.map((s, idx) => ({ ...s, set_number: idx + 1 }));
+      const updated = prev.exercises.map((ex, idx) => {
+        if (idx !== exerciseIndex) return ex;
+        const filteredSets = ex.sets
+          .filter((_, sIdx) => sIdx !== setIndex)
+          .map((s, sIdx) => ({ ...s, set_number: sIdx + 1 }));
+        return { ...ex, sets: filteredSets };
+      });
       return { ...prev, exercises: updated };
+    });
+  };
+
+  // Reorder exercises
+  const handleMoveExercise = (exerciseIndex: number, direction: -1 | 1) => {
+    setWorkout((prev) => {
+      if (!prev) return null;
+      const targetIndex = exerciseIndex + direction;
+      if (targetIndex < 0 || targetIndex >= prev.exercises.length) return prev;
+      const copy = [...prev.exercises];
+      const [moved] = copy.splice(exerciseIndex, 1);
+      copy.splice(targetIndex, 0, moved);
+      return {
+        ...prev,
+        exercises: copy.map((ex, idx) => ({ ...ex, order: idx + 1 })),
+      };
     });
   };
 
   // Add exercise from library into active workout
   const handleAddExerciseToWorkout = async (exercise: Exercise) => {
-    if (!workout) return;
-
-    // Check for previous performance to auto-fill
     const lastPerf = await getLastPerformanceForExercise(exercise.id);
+    const defaultWeight = exercise.equipment === 'Bodyweight' ? 0 : prefs.barbell_weight;
 
     const newExercise: WorkoutExercise = {
-      id: `we-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      id: generateId('we'),
       exercise_id: exercise.id,
       exercise_name: exercise.name,
       muscle_group: exercise.muscle_group,
@@ -234,10 +280,10 @@ export default function ActiveWorkoutView({
       rest_seconds: prefs.default_rest_seconds,
       sets: [
         {
-          id: `s-${Date.now()}-1`,
+          id: generateId('set'),
           set_number: 1,
           type: 'normal',
-          weight: lastPerf ? lastPerf.weight : 45,
+          weight: lastPerf ? lastPerf.weight : defaultWeight,
           reps: lastPerf ? lastPerf.reps : 10,
           previous_weight: lastPerf ? lastPerf.weight : undefined,
           previous_reps: lastPerf ? lastPerf.reps : undefined,
@@ -258,72 +304,50 @@ export default function ActiveWorkoutView({
   const handleDeleteExercise = (exerciseIndex: number) => {
     setWorkout((prev) => {
       if (!prev) return null;
-      const filtered = prev.exercises.filter((_, idx) => idx !== exerciseIndex);
+      const filtered = prev.exercises
+        .filter((_, idx) => idx !== exerciseIndex)
+        .map((ex, idx) => ({ ...ex, order: idx + 1 }));
       return { ...prev, exercises: filtered };
     });
   };
 
-  // Open plate calculator with set weight
   const openCalculator = (weight: number) => {
-    setCalcInitialWeight(weight > 0 ? weight : 135);
+    setCalcInitialWeight(weight > 0 ? weight : prefs.weight_unit === 'kg' ? 60 : 135);
     setIsPlateCalcOpen(true);
   };
 
-  // Finish Workout
+  // Finish Workout (keeps WorkoutCompleteModal mounted until user closes it!)
   const handleFinishWorkout = async () => {
-    if (!workout) return;
-
-    let totalVolume = 0;
-    let totalSets = 0;
-    let totalReps = 0;
-
-    for (const ex of workout.exercises) {
-      for (const set of ex.sets) {
-        if (set.completed) {
-          totalSets++;
-          totalReps += set.reps;
-          totalVolume += set.weight * set.reps;
-        }
-      }
-    }
-
-    // Detect new PRs achieved during this workout
-    const currentPRs = await calculatePersonalRecords();
-    let prCount = 0;
-
-    for (const ex of workout.exercises) {
-      for (const set of ex.sets) {
-        if (!set.completed || set.weight <= 0) continue;
-        const est1RM = calculate1RM(set.weight, set.reps);
-        const existing = currentPRs[ex.exercise_id];
-        if (!existing || set.weight > existing.max_weight.weight || est1RM > existing.max_1rm.value) {
-          prCount++;
-          break; // Count at most 1 PR per exercise in summary badge
-        }
-      }
-    }
+    const stats = calculateWorkoutStats(workout.exercises);
+    const existingPRs = await calculatePersonalRecords();
+    const prCount = countNewPRs(workout.exercises, existingPRs);
+    const nowIso = new Date().toISOString();
 
     const finished: Workout = {
       ...workout,
-      end_time: new Date().toISOString(),
+      end_time: nowIso,
       duration_seconds: elapsedSeconds,
-      total_volume: totalVolume,
-      total_sets: totalSets,
-      total_reps: totalReps,
+      total_volume: stats.total_volume,
+      total_sets: stats.total_sets,
+      total_reps: stats.total_reps,
       pr_count: prCount,
-      updated_at: new Date().toISOString(),
+      updated_at: nowIso,
       synced: false,
     };
 
-    await saveWorkout(finished);
+    const saved = await saveWorkout(finished);
     await clearActiveWorkout();
 
-    setCompletedWorkout(finished);
-    setIsCompleteModalOpen(true);
     setIsResting(false);
+    setRestEndTimestamp(null);
+    setCompletedWorkout(saved);
+    setIsCompleteModalOpen(true);
+  };
 
-    if (onFinish) {
-      onFinish(finished);
+  const handleCloseCompleteModal = () => {
+    setIsCompleteModalOpen(false);
+    if (onFinish && completedWorkout) {
+      onFinish(completedWorkout);
     }
   };
 
@@ -337,50 +361,130 @@ export default function ActiveWorkoutView({
     }
   };
 
-  const formatElapsed = (totalSecs: number) => {
-    const mins = Math.floor(totalSecs / 60);
-    const secs = totalSecs % 60;
-    return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+  // Swipe-right gesture handlers for set rows
+  const handleSetTouchStart = (setId: string, e: React.TouchEvent) => {
+    const touch = e.touches[0];
+    if (!touch) return;
+    touchStartXRef.current = touch.clientX;
+    touchStartYRef.current = touch.clientY;
+    setSwipingSetId(setId);
+    setSwipeOffsetX(0);
   };
+
+  const handleSetTouchMove = (setId: string, e: React.TouchEvent) => {
+    if (swipingSetId !== setId || touchStartXRef.current === null || touchStartYRef.current === null) {
+      return;
+    }
+    const touch = e.touches[0];
+    if (!touch) return;
+    const dx = touch.clientX - touchStartXRef.current;
+    const dy = Math.abs(touch.clientY - touchStartYRef.current);
+
+    // Ignore vertical scrolling
+    if (dy > 24 && Math.abs(dx) < dy) {
+      setSwipingSetId(null);
+      setSwipeOffsetX(0);
+      return;
+    }
+    if (dx > 0) {
+      setSwipeOffsetX(Math.min(84, dx));
+    }
+  };
+
+  const handleSetTouchEnd = (exIdx: number, sIdx: number) => {
+    if (swipeOffsetX >= 56) {
+      handleToggleCompleteSet(exIdx, sIdx);
+    }
+    touchStartXRef.current = null;
+    touchStartYRef.current = null;
+    setSwipingSetId(null);
+    setSwipeOffsetX(0);
+  };
+
+  const liveStats = calculateWorkoutStats(workout.exercises);
 
   return (
     <div className="space-y-4 pb-20">
-      {/* Top Active Bar: Session Title + Elapsed Timer + Finish Button */}
-      <div className="sticky top-14 z-30 bg-zinc-950/95 backdrop-blur-lg border border-zinc-800/90 rounded-2xl p-3.5 shadow-xl flex items-center justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span>
-            <h1 className="font-black text-lg text-zinc-100 tracking-tight leading-none truncate max-w-[180px]">
-              {workout.name}
-            </h1>
+      {/* Top Active Bar: Session Title + Elapsed Timer + Pause/Discard/Finish */}
+      <div className="sticky top-14 z-30 bg-zinc-950/95 backdrop-blur-lg border border-zinc-800/90 rounded-2xl p-3.5 shadow-xl space-y-2.5">
+        <div className="flex items-center justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <span
+                className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
+                  isTimerPaused ? 'bg-amber-400' : 'bg-emerald-400 animate-ping'
+                }`}
+              />
+              <input
+                type="text"
+                value={workout.name}
+                onChange={(e) => setWorkout((prev) => (prev ? { ...prev, name: e.target.value } : null))}
+                aria-label="Workout name"
+                className="font-black text-base text-zinc-100 tracking-tight leading-none bg-transparent focus:outline-none focus:border-b focus:border-emerald-500 w-full truncate"
+              />
+            </div>
+            <div className="flex items-center gap-2 mt-1.5 text-xs">
+              <button
+                type="button"
+                onClick={handleTogglePauseTimer}
+                className="inline-flex items-center gap-1 font-mono font-semibold text-emerald-400 hover:text-emerald-300 active-press"
+                title={isTimerPaused ? 'Resume timer' : 'Pause timer'}
+              >
+                {isTimerPaused ? <Play className="w-3 h-3" /> : <Pause className="w-3 h-3" />}
+                <span>{formatElapsedSeconds(elapsedSeconds)}</span>
+              </button>
+              <span className="text-zinc-600">•</span>
+              <span className="text-zinc-400">{liveStats.total_sets} sets</span>
+              <span className="text-zinc-600">•</span>
+              <span className="text-zinc-300 font-mono">
+                {liveStats.total_volume.toLocaleString()} {prefs.weight_unit}
+              </span>
+            </div>
           </div>
-          <div className="flex items-center gap-2 mt-1">
-            <span className="font-mono text-xs font-semibold text-emerald-400">
-              ⏱️ {formatElapsed(elapsedSeconds)}
-            </span>
-            <span className="text-zinc-600">•</span>
-            <span className="text-xs text-zinc-400">
-              {workout.exercises.length} exercises
-            </span>
+
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            <button
+              type="button"
+              onClick={() => setShowNotes((prev) => !prev)}
+              className={`p-2 rounded-xl border active-press ${
+                showNotes || workout.notes
+                  ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400'
+                  : 'bg-zinc-900 border-zinc-800 text-zinc-500 hover:text-zinc-200'
+              }`}
+              title="Workout Notes"
+              aria-label="Toggle workout notes"
+            >
+              <StickyNote className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={handleCancelWorkout}
+              className="p-2 text-zinc-500 hover:text-red-400 bg-zinc-900 rounded-xl border border-zinc-800 active-press"
+              title="Discard Workout"
+              aria-label="Discard workout"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={handleFinishWorkout}
+              className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-black text-sm rounded-xl shadow-lg shadow-emerald-500/25 active-press flex items-center gap-1.5"
+            >
+              <Check className="w-4 h-4 stroke-[3]" />
+              <span>Finish</span>
+            </button>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <button
-            onClick={handleCancelWorkout}
-            className="p-2 text-zinc-500 hover:text-red-400 bg-zinc-900 rounded-xl border border-zinc-800 active-press"
-            title="Discard Workout"
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
-          <button
-            onClick={handleFinishWorkout}
-            className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-black text-sm rounded-xl shadow-lg shadow-emerald-500/25 active-press flex items-center gap-1.5"
-          >
-            <Check className="w-4 h-4 stroke-[3]" />
-            <span>Finish</span>
-          </button>
-        </div>
+        {showNotes && (
+          <textarea
+            rows={2}
+            value={workout.notes || ''}
+            onChange={(e) => setWorkout((prev) => (prev ? { ...prev, notes: e.target.value } : null))}
+            placeholder="Session notes (energy, sleep, cues...)"
+            className="w-full px-3 py-2 bg-zinc-900 border border-zinc-800 rounded-xl text-xs text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:border-emerald-500 resize-none"
+          />
+        )}
       </div>
 
       {/* Exercises List */}
@@ -391,10 +495,10 @@ export default function ActiveWorkoutView({
             className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 shadow-md space-y-3"
           >
             {/* Exercise Title Bar */}
-            <div className="flex items-start justify-between">
-              <div>
-                <h2 className="font-bold text-base text-zinc-100 flex items-center gap-1.5">
-                  <span>{exercise.exercise_name}</span>
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <h2 className="font-bold text-base text-zinc-100 truncate">
+                  {exercise.exercise_name}
                 </h2>
                 <div className="flex items-center gap-2 mt-0.5">
                   <span className="text-[11px] font-medium text-emerald-400/90 px-1.5 py-0.5 rounded bg-emerald-500/10">
@@ -404,25 +508,51 @@ export default function ActiveWorkoutView({
                 </div>
               </div>
 
-              <div className="flex items-center gap-1">
-                {/* Plate calculator shortcut for barbells */}
+              <div className="flex items-center gap-1 flex-shrink-0">
                 {(exercise.equipment === 'Barbell' || exercise.equipment === 'Smith Machine') && (
                   <button
+                    type="button"
                     onClick={() => {
-                      const firstSetWeight = exercise.sets[0]?.weight || 135;
-                      openCalculator(firstSetWeight);
+                      const workingSet = exercise.sets.find((s) => s.weight > 0);
+                      openCalculator(workingSet?.weight || 135);
                     }}
                     className="p-1.5 rounded-lg bg-zinc-800 text-zinc-300 hover:text-emerald-400 active-press border border-zinc-700/60"
                     title="Plate Calculator"
+                    aria-label="Open plate calculator"
                   >
                     <Scale className="w-4 h-4" />
                   </button>
                 )}
 
+                {exIdx > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => handleMoveExercise(exIdx, -1)}
+                    className="p-1.5 rounded-lg text-zinc-500 hover:text-zinc-200 active-press"
+                    title="Move up"
+                    aria-label="Move exercise up"
+                  >
+                    <ArrowUp className="w-3.5 h-3.5" />
+                  </button>
+                )}
+                {exIdx < workout.exercises.length - 1 && (
+                  <button
+                    type="button"
+                    onClick={() => handleMoveExercise(exIdx, 1)}
+                    className="p-1.5 rounded-lg text-zinc-500 hover:text-zinc-200 active-press"
+                    title="Move down"
+                    aria-label="Move exercise down"
+                  >
+                    <ArrowDown className="w-3.5 h-3.5" />
+                  </button>
+                )}
+
                 <button
+                  type="button"
                   onClick={() => handleDeleteExercise(exIdx)}
                   className="p-1.5 rounded-lg text-zinc-500 hover:text-red-400 active-press"
                   title="Remove exercise"
+                  aria-label="Remove exercise"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -432,35 +562,46 @@ export default function ActiveWorkoutView({
             {/* Sets Table */}
             <div className="overflow-x-auto -mx-2">
               <div className="min-w-[320px] px-2 space-y-1.5">
-                {/* Table Header */}
                 <div className="grid grid-cols-12 gap-1 text-[11px] font-mono text-zinc-400 uppercase tracking-wider px-1 pb-1 border-b border-zinc-800/80">
                   <div className="col-span-2 text-center">Set</div>
                   <div className="col-span-3 text-center">Previous</div>
-                  <div className="col-span-3 text-center">Weight</div>
+                  <div className="col-span-3 text-center">{prefs.weight_unit}</div>
                   <div className="col-span-2 text-center">Reps</div>
                   <div className="col-span-2 text-center">Done</div>
                 </div>
 
-                {/* Set Rows */}
                 {exercise.sets.map((set, sIdx) => {
                   const isDone = set.completed;
+                  const isSwiping = swipingSetId === set.id && swipeOffsetX > 0;
                   return (
                     <div
                       key={set.id}
+                      onTouchStart={(e) => handleSetTouchStart(set.id, e)}
+                      onTouchMove={(e) => handleSetTouchMove(set.id, e)}
+                      onTouchEnd={() => handleSetTouchEnd(exIdx, sIdx)}
+                      style={
+                        isSwiping
+                          ? { transform: `translateX(${swipeOffsetX}px)`, transition: 'none' }
+                          : { transform: 'translateX(0px)', transition: 'transform 150ms ease-out' }
+                      }
                       className={`grid grid-cols-12 gap-1 items-center py-1.5 px-1 rounded-xl transition-colors ${
-                        isDone ? 'bg-emerald-950/25 border border-emerald-900/40' : 'bg-zinc-950/60'
+                        isDone
+                          ? 'bg-emerald-950/25 border border-emerald-900/40'
+                          : isSwiping && swipeOffsetX >= 56
+                          ? 'bg-emerald-500/20 border border-emerald-500/50'
+                          : 'bg-zinc-950/60'
                       }`}
                     >
                       {/* Set Number & Type Pill */}
                       <div className="col-span-2 flex items-center justify-center">
                         <button
+                          type="button"
                           onClick={() => {
-                            // Cycle through set types: normal -> warmup -> dropset -> failure -> normal
                             const types: SetType[] = ['normal', 'warmup', 'dropset', 'failure'];
                             const nextType = types[(types.indexOf(set.type) + 1) % types.length];
                             handleUpdateSet(exIdx, sIdx, { type: nextType });
                           }}
-                          className={`w-7 h-7 rounded-lg text-xs font-mono font-bold flex items-center justify-center active-press ${
+                          className={`w-8 h-8 rounded-lg text-xs font-mono font-bold flex items-center justify-center active-press ${
                             set.type === 'warmup'
                               ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
                               : set.type === 'dropset'
@@ -493,15 +634,17 @@ export default function ActiveWorkoutView({
                         <div className="flex items-center bg-zinc-900 rounded-lg border border-zinc-800 overflow-hidden w-full max-w-[84px]">
                           <input
                             type="number"
+                            inputMode="decimal"
                             step="2.5"
                             value={set.weight === 0 ? '' : set.weight}
                             placeholder="0"
                             onChange={(e) =>
                               handleUpdateSet(exIdx, sIdx, {
-                                weight: parseFloat(e.target.value) || 0,
+                                weight: Math.max(0, parseFloat(e.target.value) || 0),
                               })
                             }
-                            className="w-full bg-transparent py-1.5 px-1 text-center font-bold text-sm text-zinc-100 focus:outline-none focus:bg-zinc-800"
+                            aria-label={`Set ${set.set_number} weight`}
+                            className="w-full bg-transparent py-2 px-1 text-center font-bold text-sm text-zinc-100 focus:outline-none focus:bg-zinc-800"
                           />
                         </div>
                       </div>
@@ -511,14 +654,16 @@ export default function ActiveWorkoutView({
                         <div className="flex items-center bg-zinc-900 rounded-lg border border-zinc-800 overflow-hidden w-full max-w-[64px]">
                           <input
                             type="number"
+                            inputMode="numeric"
                             value={set.reps === 0 ? '' : set.reps}
                             placeholder="0"
                             onChange={(e) =>
                               handleUpdateSet(exIdx, sIdx, {
-                                reps: parseInt(e.target.value, 10) || 0,
+                                reps: Math.max(0, parseInt(e.target.value, 10) || 0),
                               })
                             }
-                            className="w-full bg-transparent py-1.5 px-1 text-center font-bold text-sm text-zinc-100 focus:outline-none focus:bg-zinc-800"
+                            aria-label={`Set ${set.set_number} reps`}
+                            className="w-full bg-transparent py-2 px-1 text-center font-bold text-sm text-zinc-100 focus:outline-none focus:bg-zinc-800"
                           />
                         </div>
                       </div>
@@ -526,8 +671,9 @@ export default function ActiveWorkoutView({
                       {/* Done / Swipe Complete Button */}
                       <div className="col-span-2 flex items-center justify-center">
                         <button
+                          type="button"
                           onClick={() => handleToggleCompleteSet(exIdx, sIdx)}
-                          className={`w-9 h-9 rounded-xl flex items-center justify-center transition-all active-press ${
+                          className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all active-press ${
                             isDone
                               ? 'bg-emerald-500 text-zinc-950 shadow-md shadow-emerald-500/30 ring-2 ring-emerald-400/40'
                               : 'bg-zinc-800 border border-zinc-700 text-zinc-400 hover:text-zinc-200'
@@ -543,9 +689,10 @@ export default function ActiveWorkoutView({
               </div>
             </div>
 
-            {/* Exercise Footer: Add Set Button */}
+            {/* Exercise Footer: Add Set / Remove Last Set */}
             <div className="flex items-center justify-between pt-1">
               <button
+                type="button"
                 onClick={() => handleAddSet(exIdx)}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-zinc-800/80 hover:bg-zinc-800 text-zinc-300 text-xs font-semibold active-press"
               >
@@ -555,6 +702,7 @@ export default function ActiveWorkoutView({
 
               {exercise.sets.length > 1 && (
                 <button
+                  type="button"
                   onClick={() => handleDeleteSet(exIdx, exercise.sets.length - 1)}
                   className="text-xs text-zinc-500 hover:text-red-400 py-1 px-2"
                 >
@@ -566,8 +714,9 @@ export default function ActiveWorkoutView({
         ))}
       </div>
 
-      {/* Add Exercise Floating / Full-width Button */}
+      {/* Add Exercise Button */}
       <button
+        type="button"
         onClick={() => setIsAddExerciseModalOpen(true)}
         className="w-full py-3.5 rounded-2xl border-2 border-dashed border-zinc-700/80 hover:border-emerald-500/50 bg-zinc-900/40 hover:bg-zinc-900 text-zinc-300 font-bold text-sm flex items-center justify-center gap-2 active-press transition-colors"
       >
@@ -581,14 +730,14 @@ export default function ActiveWorkoutView({
           secondsRemaining={restSecondsRemaining}
           totalSeconds={restTotalSeconds}
           exerciseName={restExerciseName}
-          onAdjustTime={(delta) =>
-            setRestSecondsRemaining((prev) => Math.max(0, prev + delta))
-          }
+          onAdjustTime={handleAdjustRestTime}
           onSkip={() => {
             setIsResting(false);
+            setRestEndTimestamp(null);
             setRestSecondsRemaining(0);
           }}
           soundEnabled={prefs.sound_enabled}
+          hapticEnabled={prefs.haptic_enabled}
         />
       )}
 
@@ -605,64 +754,20 @@ export default function ActiveWorkoutView({
       <WorkoutCompleteModal
         isOpen={isCompleteModalOpen}
         workout={completedWorkout}
-        onClose={() => setIsCompleteModalOpen(false)}
+        onClose={handleCloseCompleteModal}
         weightUnit={prefs.weight_unit}
       />
 
-      {/* Modal: Select Exercise from Library */}
-      {isAddExerciseModalOpen && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-black/80 backdrop-blur-md p-4 animate-in fade-in">
-          <div className="flex-1 max-w-lg mx-auto w-full bg-zinc-900 border border-zinc-800 rounded-3xl p-5 flex flex-col shadow-2xl overflow-hidden">
-            <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
-              <h2 className="font-bold text-base text-zinc-100">Add Exercise</h2>
-              <button
-                onClick={() => setIsAddExerciseModalOpen(false)}
-                className="p-1.5 rounded-lg bg-zinc-800 text-zinc-400 hover:text-zinc-100 active-press"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="pt-3 pb-2">
-              <input
-                type="text"
-                value={exerciseSearch}
-                onChange={(e) => setExerciseSearch(e.target.value)}
-                placeholder="Search 100+ exercises..."
-                className="w-full px-4 py-2.5 bg-zinc-950 border border-zinc-800 rounded-xl text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-emerald-500"
-                autoFocus
-              />
-            </div>
-
-            <div className="flex-1 overflow-y-auto divide-y divide-zinc-800/60 -mx-2 px-2">
-              {allExercises
-                .filter(
-                  (ex) =>
-                    ex.name.toLowerCase().includes(exerciseSearch.toLowerCase()) ||
-                    ex.muscle_group.toLowerCase().includes(exerciseSearch.toLowerCase()) ||
-                    ex.equipment.toLowerCase().includes(exerciseSearch.toLowerCase())
-                )
-                .map((ex) => (
-                  <button
-                    key={ex.id}
-                    onClick={() => handleAddExerciseToWorkout(ex)}
-                    className="w-full py-3 px-2 flex items-center justify-between text-left hover:bg-zinc-800/60 rounded-xl active-press transition-colors"
-                  >
-                    <div>
-                      <span className="font-bold text-sm text-zinc-100 block">{ex.name}</span>
-                      <div className="flex items-center gap-2 mt-0.5 text-xs text-zinc-400">
-                        <span className="text-emerald-400">{ex.muscle_group}</span>
-                        <span>•</span>
-                        <span>{ex.equipment}</span>
-                      </div>
-                    </div>
-                    <Plus className="w-4 h-4 text-emerald-400" />
-                  </button>
-                ))}
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Shared Exercise Library Picker Modal */}
+      <ExercisePickerModal
+        isOpen={isAddExerciseModalOpen}
+        title="Add Exercise"
+        exercises={allExercises}
+        onSelect={(ex) => {
+          void handleAddExerciseToWorkout(ex);
+        }}
+        onClose={() => setIsAddExerciseModalOpen(false)}
+      />
     </div>
   );
 }

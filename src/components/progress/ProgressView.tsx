@@ -12,22 +12,8 @@ import {
   AreaChart,
   Area,
 } from 'recharts';
-import {
-  Trophy,
-  TrendingUp,
-  Scale,
-  Calendar,
-  Plus,
-  Flame,
-  Dumbbell,
-  Award,
-} from 'lucide-react';
-import {
-  Workout,
-  BodyweightEntry,
-  Exercise,
-  PersonalRecord,
-} from '@/lib/types';
+import { Trophy, TrendingUp, Scale, Plus, Award } from 'lucide-react';
+import { Workout, BodyweightEntry, Exercise, PersonalRecord } from '@/lib/types';
 import {
   getAllWorkouts,
   getAllBodyweightEntries,
@@ -37,6 +23,7 @@ import {
   calculate1RM,
   getUserPreferences,
 } from '@/lib/db';
+import { formatShortLocalDate, generateId, toLocalDateKey } from '@/lib/constants';
 import VolumeHeatmap from './VolumeHeatmap';
 import WeeklyShareCard from './WeeklyShareCard';
 
@@ -49,40 +36,41 @@ export default function ProgressView() {
   const [weightUnit, setWeightUnit] = useState('lbs');
   const [userGoal, setUserGoal] = useState(4);
 
-  // New bodyweight input state
   const [newWeight, setNewWeight] = useState('');
-  const [newDate, setNewDate] = useState(new Date().toISOString().split('T')[0]);
+  const [newDate, setNewDate] = useState(() => toLocalDateKey(new Date()));
   const [isAddingBw, setIsAddingBw] = useState(false);
-
-  // Chart Metric Mode: '1rm' | 'volume' | 'max_weight'
   const [chartMetric, setChartMetric] = useState<'1rm' | 'volume' | 'max_weight'>('1rm');
 
   useEffect(() => {
     const load = async () => {
-      const w = await getAllWorkouts();
+      const [w, bw, ex, records, p] = await Promise.all([
+        getAllWorkouts(),
+        getAllBodyweightEntries(),
+        getAllExercises(),
+        calculatePersonalRecords(),
+        getUserPreferences(),
+      ]);
       setWorkouts(w);
-
-      const bw = await getAllBodyweightEntries();
       setBodyweightLogs(bw);
-
-      const ex = await getAllExercises();
       setExercises(ex);
-
-      const records = await calculatePersonalRecords();
       setPrs(records);
-
-      const p = await getUserPreferences();
       setWeightUnit(p.weight_unit);
       setUserGoal(p.weekly_goal_workouts);
+
+      // If default exercise has no records, pick first exercise that does
+      if (!records['ex-bench-press']) {
+        const firstLoggedId = Object.keys(records)[0];
+        if (firstLoggedId) {
+          setSelectedExerciseId(firstLoggedId);
+        }
+      }
     };
-    load();
+    void load();
   }, []);
 
-  // Compute chart data for selected exercise over time
   const exerciseChartData = useMemo(() => {
     if (!selectedExerciseId || workouts.length === 0) return [];
 
-    // Chronological order
     const sorted = [...workouts].sort(
       (a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
     );
@@ -106,13 +94,11 @@ export default function ProgressView() {
         }
 
         if (best1RM > 0) {
-          const d = new Date(w.start_time);
-          const shortDate = `${d.getMonth() + 1}/${d.getDate()}`;
           points.push({
-            date: shortDate,
-            fullDate: w.start_time.split('T')[0],
+            date: formatShortLocalDate(w.start_time),
+            fullDate: toLocalDateKey(w.start_time),
             est1RM: Math.round(best1RM),
-            volume: exerciseVolume,
+            volume: Math.round(exerciseVolume),
             maxWeight,
           });
         }
@@ -122,57 +108,49 @@ export default function ProgressView() {
     return points;
   }, [workouts, selectedExerciseId]);
 
-  // Compute Bodyweight chart data
   const bodyweightChartData = useMemo(() => {
-    return bodyweightLogs.map((entry) => {
-      const d = new Date(entry.date);
-      return {
-        date: `${d.getMonth() + 1}/${d.getDate()}`,
-        weight: entry.weight,
-        fullDate: entry.date,
-      };
-    });
+    return bodyweightLogs.map((entry) => ({
+      date: formatShortLocalDate(entry.date),
+      weight: entry.weight,
+      fullDate: entry.date,
+    }));
   }, [bodyweightLogs]);
 
-  // Quick log bodyweight
   const handleSaveBodyweight = async (e: React.FormEvent) => {
     e.preventDefault();
     const val = parseFloat(newWeight);
     if (!val || val <= 0) return;
 
     const entry: BodyweightEntry = {
-      id: `bw-${Date.now()}`,
+      id: generateId('bw'),
       date: newDate,
       weight: val,
       created_at: new Date().toISOString(),
     };
 
     await logBodyweight(entry);
-    setBodyweightLogs((prev) => [...prev, entry].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()));
+    setBodyweightLogs((prev) =>
+      [...prev, entry].sort((a, b) => a.date.localeCompare(b.date))
+    );
     setNewWeight('');
     setIsAddingBw(false);
   };
 
-  const selectedExercise = exercises.find((e) => e.id === selectedExerciseId);
   const selectedPr = prs[selectedExerciseId];
 
   return (
     <div className="space-y-6">
-      {/* Page Title */}
       <div>
         <h1 className="text-2xl font-black text-zinc-100 tracking-tight">Progress & Records</h1>
         <p className="text-xs text-zinc-400">Track 1RM strength, volume load, and PR trophies</p>
       </div>
 
-      {/* 1. Weekly Shareable Card */}
       <WeeklyShareCard workouts={workouts} weightUnit={weightUnit} userGoal={userGoal} />
 
-      {/* 2. Monthly Volume Heatmap */}
       <VolumeHeatmap workouts={workouts} weightUnit={weightUnit} />
 
-      {/* 3. Exercise Strength Progression Chart */}
+      {/* Exercise Strength Progression Chart */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 shadow-xl space-y-4">
-        {/* Header & Exercise Dropdown */}
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -182,9 +160,9 @@ export default function ProgressView() {
               <h2 className="font-bold text-base text-zinc-100">Strength Progression</h2>
             </div>
 
-            {/* Metric Toggle */}
             <div className="flex bg-zinc-950 p-1 rounded-xl border border-zinc-800 text-[11px] font-semibold">
               <button
+                type="button"
                 onClick={() => setChartMetric('1rm')}
                 className={`px-2.5 py-1 rounded-lg transition-colors active-press ${
                   chartMetric === '1rm'
@@ -195,6 +173,7 @@ export default function ProgressView() {
                 1RM
               </button>
               <button
+                type="button"
                 onClick={() => setChartMetric('volume')}
                 className={`px-2.5 py-1 rounded-lg transition-colors active-press ${
                   chartMetric === 'volume'
@@ -205,6 +184,7 @@ export default function ProgressView() {
                 Volume
               </button>
               <button
+                type="button"
                 onClick={() => setChartMetric('max_weight')}
                 className={`px-2.5 py-1 rounded-lg transition-colors active-press ${
                   chartMetric === 'max_weight'
@@ -217,10 +197,10 @@ export default function ProgressView() {
             </div>
           </div>
 
-          {/* Exercise Select Box */}
           <select
             value={selectedExerciseId}
             onChange={(e) => setSelectedExerciseId(e.target.value)}
+            aria-label="Select exercise for chart"
             className="w-full px-3.5 py-2.5 bg-zinc-950 border border-zinc-800 rounded-xl text-sm font-semibold text-zinc-100 focus:outline-none focus:border-emerald-500"
           >
             {exercises.map((ex) => (
@@ -231,7 +211,6 @@ export default function ProgressView() {
           </select>
         </div>
 
-        {/* PR Quick Highlights for this Exercise */}
         {selectedPr && (
           <div className="grid grid-cols-3 gap-2 pt-1">
             <div className="p-2.5 rounded-xl bg-zinc-950 border border-zinc-800 text-center">
@@ -255,7 +234,6 @@ export default function ProgressView() {
           </div>
         )}
 
-        {/* Recharts Curve */}
         <div className="h-60 w-full pt-2">
           {exerciseChartData.length === 0 ? (
             <div className="h-full flex items-center justify-center text-xs text-zinc-500">
@@ -281,18 +259,28 @@ export default function ProgressView() {
                     fontSize: '12px',
                     color: '#f4f4f5',
                   }}
-                  formatter={(val: any) => [
-                    `${val} ${chartMetric === 'volume' ? weightUnit : weightUnit}`,
-                    chartMetric === '1rm' ? 'Estimated 1RM' : chartMetric === 'volume' ? 'Volume' : 'Max Weight',
+                  formatter={(val: number | string) => [
+                    `${val} ${weightUnit}`,
+                    chartMetric === '1rm'
+                      ? 'Estimated 1RM'
+                      : chartMetric === 'volume'
+                      ? 'Volume'
+                      : 'Max Weight',
                   ]}
                   labelFormatter={(label, payload) => {
-                    const item = payload[0]?.payload;
-                    return item ? item.fullDate : label;
+                    const item = payload?.[0]?.payload as { fullDate?: string } | undefined;
+                    return item?.fullDate || String(label);
                   }}
                 />
                 <Area
                   type="monotone"
-                  dataKey={chartMetric === '1rm' ? 'est1RM' : chartMetric === 'volume' ? 'volume' : 'maxWeight'}
+                  dataKey={
+                    chartMetric === '1rm'
+                      ? 'est1RM'
+                      : chartMetric === 'volume'
+                      ? 'volume'
+                      : 'maxWeight'
+                  }
                   stroke="#10b981"
                   strokeWidth={3}
                   fillOpacity={1}
@@ -306,7 +294,7 @@ export default function ProgressView() {
         </div>
       </div>
 
-      {/* 4. Bodyweight Log & Chart */}
+      {/* Bodyweight Log & Chart */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 shadow-xl space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -327,7 +315,8 @@ export default function ProgressView() {
           </div>
 
           <button
-            onClick={() => setIsAddingBw(!isAddingBw)}
+            type="button"
+            onClick={() => setIsAddingBw((prev) => !prev)}
             className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold active-press"
           >
             <Plus className="w-3.5 h-3.5 text-cyan-400" />
@@ -335,7 +324,6 @@ export default function ProgressView() {
           </button>
         </div>
 
-        {/* Quick Add Form */}
         {isAddingBw && (
           <form
             onSubmit={handleSaveBodyweight}
@@ -350,11 +338,12 @@ export default function ProgressView() {
             <div className="flex-1 flex items-center bg-zinc-900 border border-zinc-800 rounded-xl px-2.5 py-2">
               <input
                 type="number"
+                inputMode="decimal"
                 step="0.1"
                 required
                 value={newWeight}
                 onChange={(e) => setNewWeight(e.target.value)}
-                placeholder={`e.g. 175.5`}
+                placeholder="e.g. 175.5"
                 className="w-full bg-transparent text-xs text-zinc-100 focus:outline-none font-bold"
               />
               <span className="text-[11px] text-zinc-500 ml-1">{weightUnit}</span>
@@ -368,7 +357,6 @@ export default function ProgressView() {
           </form>
         )}
 
-        {/* Bodyweight Chart */}
         <div className="h-52 w-full pt-2">
           {bodyweightChartData.length === 0 ? (
             <div className="h-full flex items-center justify-center text-xs text-zinc-500">
@@ -387,8 +375,11 @@ export default function ProgressView() {
                     borderRadius: '12px',
                     fontSize: '12px',
                   }}
-                  formatter={(val: any) => [`${val} ${weightUnit}`, 'Weight']}
-                  labelFormatter={(label, payload) => payload[0]?.payload?.fullDate || label}
+                  formatter={(val: number | string) => [`${val} ${weightUnit}`, 'Weight']}
+                  labelFormatter={(label, payload) => {
+                    const item = payload?.[0]?.payload as { fullDate?: string } | undefined;
+                    return item?.fullDate || String(label);
+                  }}
                 />
                 <Line
                   type="monotone"
@@ -403,7 +394,7 @@ export default function ProgressView() {
         </div>
       </div>
 
-      {/* 5. PR Trophy Showcase */}
+      {/* PR Trophy Showcase */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 shadow-xl space-y-3">
         <div className="flex items-center gap-2">
           <div className="p-1.5 rounded-lg bg-amber-500/10 text-amber-400">
@@ -417,6 +408,7 @@ export default function ProgressView() {
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
           {Object.values(prs)
+            .sort((a, b) => b.max_1rm.value - a.max_1rm.value)
             .slice(0, 6)
             .map((rec) => (
               <div
@@ -428,7 +420,7 @@ export default function ProgressView() {
                     {rec.exercise_name}
                   </h4>
                   <span className="text-[10px] text-zinc-500 font-mono">
-                    {rec.max_1rm.date.split('T')[0]}
+                    {toLocalDateKey(rec.max_1rm.date)}
                   </span>
                 </div>
 

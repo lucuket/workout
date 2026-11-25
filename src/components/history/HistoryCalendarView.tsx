@@ -2,7 +2,6 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import {
-  Calendar as CalendarIcon,
   ChevronLeft,
   ChevronRight,
   Clock,
@@ -12,31 +11,38 @@ import {
 } from 'lucide-react';
 import { Workout } from '@/lib/types';
 import { getAllWorkouts, getUserPreferences } from '@/lib/db';
+import { toLocalDateKey } from '@/lib/constants';
 import WorkoutDetailModal from './WorkoutDetailModal';
+
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
 
 export default function HistoryCalendarView() {
   const [workouts, setWorkouts] = useState<Workout[]>([]);
-  const [currentMonth, setCurrentMonth] = useState(new Date());
+  const [currentMonth, setCurrentMonth] = useState(() => new Date());
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [selectedWorkout, setSelectedWorkout] = useState<Workout | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [weightUnit, setWeightUnit] = useState('lbs');
 
+  const todayKey = useMemo(() => toLocalDateKey(new Date()), []);
+
   useEffect(() => {
     const load = async () => {
-      const data = await getAllWorkouts();
+      const [data, prefs] = await Promise.all([getAllWorkouts(), getUserPreferences()]);
       setWorkouts(data);
-      const prefs = await getUserPreferences();
       setWeightUnit(prefs.weight_unit);
     };
-    load();
+    void load();
   }, []);
 
-  // Map workouts by date (YYYY-MM-DD)
+  // Map workouts by local date (YYYY-MM-DD)
   const workoutsByDate = useMemo(() => {
     const map: Record<string, Workout[]> = {};
     for (const w of workouts) {
-      const d = w.start_time.split('T')[0];
+      const d = toLocalDateKey(w.start_time);
       if (!map[d]) {
         map[d] = [];
       }
@@ -45,17 +51,11 @@ export default function HistoryCalendarView() {
     return map;
   }, [workouts]);
 
-  // Calendar calculations
   const year = currentMonth.getFullYear();
   const month = currentMonth.getMonth();
 
   const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const firstDayIndex = new Date(year, month, 1).getDay(); // 0 = Sun
-
-  const monthNames = [
-    'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December'
-  ];
+  const firstDayIndex = new Date(year, month, 1).getDay();
 
   const handlePrevMonth = () => {
     setCurrentMonth(new Date(year, month - 1, 1));
@@ -71,7 +71,11 @@ export default function HistoryCalendarView() {
   };
 
   const handleWorkoutUpdated = (updated: Workout) => {
-    setWorkouts((prev) => prev.map((w) => (w.id === updated.id ? updated : w)));
+    setWorkouts((prev) =>
+      prev
+        .map((w) => (w.id === updated.id ? updated : w))
+        .sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime())
+    );
     setSelectedWorkout(updated);
   };
 
@@ -79,17 +83,16 @@ export default function HistoryCalendarView() {
     setWorkouts((prev) => prev.filter((w) => w.id !== id));
   };
 
-  // Filtered workouts for the selected day or overall recent
+  // Properly return empty list when a selected date has no logged workouts
   const displayedWorkouts = useMemo(() => {
-    if (selectedDate && workoutsByDate[selectedDate]) {
-      return workoutsByDate[selectedDate];
+    if (selectedDate) {
+      return workoutsByDate[selectedDate] || [];
     }
-    return workouts.slice(0, 20); // Recent 20 workouts if no date selected
+    return workouts.slice(0, 20);
   }, [selectedDate, workoutsByDate, workouts]);
 
   return (
     <div className="space-y-5">
-      {/* Header */}
       <div>
         <h1 className="text-2xl font-black text-zinc-100 tracking-tight">Workout History</h1>
         <p className="text-xs text-zinc-400">Calendar log & past session editor</p>
@@ -97,29 +100,31 @@ export default function HistoryCalendarView() {
 
       {/* Calendar Card */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 shadow-xl space-y-4">
-        {/* Month Navigation */}
         <div className="flex items-center justify-between">
           <h2 className="font-bold text-base text-zinc-100">
-            {monthNames[month]} {year}
+            {MONTH_NAMES[month]} {year}
           </h2>
 
           <div className="flex items-center gap-1">
             <button
+              type="button"
               onClick={handlePrevMonth}
               className="p-1.5 rounded-lg bg-zinc-800 text-zinc-300 hover:text-zinc-100 active-press"
+              aria-label="Previous month"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
             <button
+              type="button"
               onClick={handleNextMonth}
               className="p-1.5 rounded-lg bg-zinc-800 text-zinc-300 hover:text-zinc-100 active-press"
+              aria-label="Next month"
             >
               <ChevronRight className="w-4 h-4" />
             </button>
           </div>
         </div>
 
-        {/* Days of Week */}
         <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-bold text-zinc-500 uppercase">
           <span>Sun</span>
           <span>Mon</span>
@@ -130,29 +135,30 @@ export default function HistoryCalendarView() {
           <span>Sat</span>
         </div>
 
-        {/* Calendar Day Grid */}
         <div className="grid grid-cols-7 gap-1">
-          {/* Empty cells before month start */}
           {Array.from({ length: firstDayIndex }).map((_, i) => (
             <div key={`empty-${i}`} className="h-10 rounded-xl" />
           ))}
 
-          {/* Days */}
           {Array.from({ length: daysInMonth }).map((_, i) => {
             const dayNum = i + 1;
             const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
-            const hasWorkouts = Boolean(workoutsByDate[dateStr]);
+            const hasWorkouts = Boolean(workoutsByDate[dateStr]?.length);
             const isSelected = selectedDate === dateStr;
+            const isToday = dateStr === todayKey;
 
             return (
               <button
                 key={dateStr}
+                type="button"
                 onClick={() => setSelectedDate(isSelected ? null : dateStr)}
                 className={`h-10 rounded-xl flex flex-col items-center justify-center relative transition-all active-press ${
                   isSelected
                     ? 'bg-emerald-500 text-zinc-950 font-black shadow-md ring-2 ring-emerald-400'
                     : hasWorkouts
                     ? 'bg-zinc-950 text-zinc-100 font-bold border border-zinc-800 hover:border-emerald-500/50'
+                    : isToday
+                    ? 'text-emerald-400 font-bold border border-emerald-500/30 bg-emerald-500/5'
                     : 'text-zinc-500 hover:bg-zinc-800/40'
                 }`}
               >
@@ -176,10 +182,11 @@ export default function HistoryCalendarView() {
           <span>
             {selectedDate
               ? `Workouts on ${selectedDate} (${displayedWorkouts.length})`
-              : `All Recent Workouts (${workouts.length})`}
+              : `Recent Workouts (${workouts.length} total)`}
           </span>
           {selectedDate && (
             <button
+              type="button"
               onClick={() => setSelectedDate(null)}
               className="text-emerald-400 hover:underline"
             >
@@ -196,15 +203,16 @@ export default function HistoryCalendarView() {
           displayedWorkouts.map((w) => {
             const dur = Math.round(w.duration_seconds / 60);
             return (
-              <div
+              <button
                 key={w.id}
+                type="button"
                 onClick={() => handleWorkoutClick(w)}
-                className="p-4 rounded-2xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 cursor-pointer active-press transition-colors space-y-2 shadow-sm"
+                className="w-full text-left p-4 rounded-2xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 active-press transition-colors space-y-2 shadow-sm block"
               >
                 <div className="flex items-start justify-between">
                   <div>
                     <span className="text-[10px] font-mono text-zinc-500">
-                      {w.start_time.split('T')[0]}
+                      {toLocalDateKey(w.start_time)}
                     </span>
                     <h3 className="font-bold text-base text-zinc-100">{w.name}</h3>
                   </div>
@@ -233,13 +241,12 @@ export default function HistoryCalendarView() {
                     <span>{w.total_sets} sets</span>
                   </div>
                 </div>
-              </div>
+              </button>
             );
           })
         )}
       </div>
 
-      {/* Workout Detail & Editor Modal */}
       <WorkoutDetailModal
         workout={selectedWorkout}
         isOpen={isDetailOpen}
